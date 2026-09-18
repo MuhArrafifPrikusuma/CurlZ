@@ -7,18 +7,30 @@ pub fn build(b: *std.Build) void {
     const mod = b.addModule("CurlZ", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .optimize = optimize,
+    });
+
+    mod.addIncludePath(.{ .cwd_relative = "/usr/include" });
+    mod.linkSystemLibrary("curl", .{});
+
+    mod.linkSystemLibrary("curl", .{
+        .needed = true,
+        .search_strategy = .paths_first,
+        .preferred_link_mode = .static,
+    });
+
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "curlZ", .module = mod },
+        },
     });
 
     const exe = b.addExecutable(.{
         .name = "CurlZ",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "CurlZ", .module = mod },
-            },
-        }),
+        .root_module = exe_mod,
     });
 
     if (optimize == .debug) {
@@ -30,15 +42,6 @@ pub fn build(b: *std.Build) void {
 
         exe.discard_local_symbols = true;
     }
-
-    exe.root_module.addIncludePath(.{ .cwd_relative = "/usr/include" });
-    exe.root_module.linkSystemLibrary("curl", .{});
-
-    exe.root_module.linkSystemLibrary("curl", .{
-        .needed = true,
-        .search_strategy = .paths_first,
-        .preferred_link_mode = .static,
-    });
 
     b.installArtifact(exe);
 
