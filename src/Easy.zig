@@ -1,7 +1,8 @@
 const std = @import("std");
-const curl = @import("curl.zig");
-const bridge = @import("bridge.zig");
+const c = @import("c");
 const ziglings = @import("ziglings.zig");
+
+const Diagnostics = @import("Diagnostics.zig");
 
 const Self = @This();
 
@@ -9,36 +10,39 @@ const EasyError = error{
     initFailed,
 };
 /// pointer to curl easy
-ptr: *curl.CURL,
+handle: *c.CURL,
+diagnostics: Diagnostics,
+
+pub const Headers = struct {
+    headers: *c.curl_slist = null,
+
+    pub fn deinit(self: *Headers) !void {
+        if (self.headers) |h| {
+            c.curl_slist_free_all(h);
+        }
+    }
+
+    pub fn add(self: *Headers, header: [:0]const u8) !void {
+        self.headers = c.curl_slist_append(self.headers, header.ptr) orelse return error.Curl_slist_append;
+    }
+};
 
 /// initiate easy interface
 pub inline fn init() !Self {
     return Self{
-        .ptr = curl.curl_easy_init() orelse return EasyError.initFailed,
+        .handle = c.curl_easy_init() orelse return error.CurlInit,
+        .diagnostics = .{},
     };
 }
 
 pub inline fn cleanup(self: *Self) void {
-    curl.curl_easy_cleanup(self.ptr);
-}
-
-pub fn setopt(self: *Self, comptime option: bridge.CurlOpt, arg: anytype) bridge.CurlE.CurlError!void {
-    if (@typeInfo(@TypeOf(arg)) == .@"struct") @compileError("use anyopaque pointer to heap for struct");
-
-    const translate_arg = comptime getArg: {
-        if (ziglings.isPrimitive(@typeInfo(@TypeOf(arg)))) {
-            break :getArg ziglings.PrimitiveCoercion(arg);
-        } else @compileError("not supported for now");
-    };
-
-    const code = curl.curl_easy_setopt(
-        self.ptr,
-        @as(c_uint, @intFromEnum(option)),
-        translate_arg,
-    );
-    return bridge.CurlE.errorFromEnum(@enumFromInt(code));
+    c.curl_easy_cleanup(self.handle);
 }
 
 pub inline fn perform(self: *Self) !void {
-    curl.curl_easy_perform(self.ptr);
+    try self.diagnostics.checkError(c.curl_easy_perform(self.handle));
+}
+
+pub inline fn setUrl(self: *Self, url: [:0]const u8) !void {
+    try self.diagnostics.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
 }
