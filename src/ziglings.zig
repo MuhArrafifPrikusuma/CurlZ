@@ -6,19 +6,55 @@ fn isPrimitive(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .optional => |optional_info| isPrimitive(optional_info.child),
         .void, .type, .noreturn => @compileError("Cannot coerce Type" ++ @typeName(T)),
-        .int, .float, .comptime_float, .comptime_int => true,
-        else => @compileError("this is called"),
+        .comptime_float, .comptime_int => @compileError("If it's comptime known value just cast it immediately"),
+        .int, .float => true,
+        else => false,
     };
 }
 
 fn isPtr(T: type) bool {
-    if (@typeInfo(T) == .optional) {
-        if (@typeInfo(T)) |optional_info| {
-            return optional_info.child == .pointer;
-        }
-    }
-    return @typeInfo(T) == .pointer;
+    return switch (@typeInfo(T)) {
+        .optional => |optional_info| @typeInfo(optional_info.child) == .pointer,
+        .pointer => true,
+        else => false,
+    };
 }
+
+/// builtin.target.cTypeBitSize somehow doesn't work for me so just use this
+const Ctype = enum {
+    char,
+    short,
+    ushort,
+    int,
+    uint,
+    long,
+    ulong,
+    longlong,
+    ulonglong,
+    float,
+    double,
+    longdouble,
+
+    pub fn bitSize(c_type: Ctype) u16 {
+        const Type = switch (c_type) {
+            .char => c_char,
+            .short => c_short,
+            .ushort => c_ushort,
+            .int => c_int,
+            .uint => c_uint,
+            .long => c_long,
+            .ulong => c_ulong,
+            .longlong => c_longlong,
+            .ulonglong => c_ulonglong,
+            .float => f32,
+            .double => f64,
+            .longdouble => c_longdouble,
+        };
+        if (@typeInfo(Type) == .int) return @typeInfo(Type).int.bits;
+        if (@typeInfo(Type) == .float) return @typeInfo(Type).float.bits;
+        unreachable;
+    }
+};
 
 /// help coercion between zig type and C type vice versa
 const coerce = struct {
@@ -28,32 +64,20 @@ const coerce = struct {
         fn IntegerCoercion(info: std.builtin.Type.Int) type {
             if (info.bits > 64) @compileError("Cannot coerce integer bits larger 64 bits");
 
-            const target = builtin.target;
-
             switch (info.signedness) {
                 .signed => {
-                    if (info.bits == target.cTypeBitSize(.char)) return c_char orelse
-                        @compileError("Target machine does not have C ABI for type char");
-                    if (info.bits == target.cTypeBitSize(.short)) return c_short orelse
-                        @compileError("Target machine does not have C ABI for type short");
-                    if (info.bits == target.cTypeBitSize(.int)) return c_int orelse
-                        @compileError("Target machine does not have C ABI for type int");
-                    if (info.bits == target.cTypeBitSize(.long)) return c_long orelse
-                        @compileError("Target machine does not have C ABI for type long");
-                    if (info.bits == target.cTypeBitSize(.longlong)) return c_longlong orelse
-                        @compileError("Target machine does not have C ABI for type longlong");
+                    if (info.bits == Ctype.bitSize(.char)) return c_char;
+                    if (info.bits == Ctype.bitSize(.short)) return c_short;
+                    if (info.bits == Ctype.bitSize(.int)) return c_int;
+                    if (info.bits == Ctype.bitSize(.long)) return c_long;
+                    if (info.bits == Ctype.bitSize(.longlong)) return c_longlong;
                 },
                 .unsigned => {
-                    if (info.bits == target.cTypeBitSize(.char)) return c_char orelse
-                        @compileError("Target machine does not have C ABI for type char");
-                    if (info.bits == target.cTypeBitSize(.ushort)) return c_ushort orelse
-                        @compileError("Target machine does not have C ABI for type ushort");
-                    if (info.bits == target.cTypeBitSize(.uint)) return c_uint orelse
-                        @compileError("Target machine does not have C ABI for type uint");
-                    if (info.bits == target.cTypeBitSize(.ulong)) return c_ulong orelse
-                        @compileError("Target machine does not have C ABI for type ulong");
-                    if (info.bits == target.cTypeBitSize(.ulonglong)) return c_ulonglong orelse
-                        @compileError("Target machine does not have C ABI for type ulonglong");
+                    if (info.bits == Ctype.bitSize(.char)) return c_char;
+                    if (info.bits == Ctype.bitSize(.ushort)) return c_ushort;
+                    if (info.bits == Ctype.bitSize(.uint)) return c_uint;
+                    if (info.bits == Ctype.bitSize(.ulong)) return c_ulong;
+                    if (info.bits == Ctype.bitSize(.ulonglong)) return c_ulonglong;
                 },
             }
 
@@ -65,12 +89,9 @@ const coerce = struct {
         }
 
         fn FloatCoercion(info: std.builtin.Type.Float) type {
-            const target = builtin.target;
-            // double and float in C is fixed size therefore f32 and f64 will work perfectly fine with it
-            // so most of the time i wouldn't even need this function
-            if (info.bits == target.cTypeBitSize(.float)) return f32;
-            if (info.bits == target.cTypeBitSize(.double)) return f64;
-            if (info.bits == target.cTypeBitSize(.longdouble)) return c_char;
+            if (info.bits == Ctype.bitSize(.float)) return f32;
+            if (info.bits == Ctype.bitSize(.double)) return f64;
+            if (info.bits == Ctype.bitSize(.longdouble)) return c_longdouble;
         }
 
         pub fn Primitive(T: type) type {
@@ -81,8 +102,9 @@ const coerce = struct {
             if (!isPrimitive(T)) @compileError("Expected primitive type found" ++ @typeName(T));
 
             return switch (info) {
-                .int, .comptime_int => |t_int| IntegerCoercion(t_int),
-                .float, .comptime_float => |t_float| FloatCoercion(t_float),
+                .int => |t_int| IntegerCoercion(t_int),
+                .float => |t_float| FloatCoercion(t_float),
+                else => @compileError(@typeName(T) ++ " in coerce.loose.Primitive"),
             };
         }
     };
@@ -100,6 +122,7 @@ const coerce = struct {
                 64 => f64,
                 80 => f80,
                 128 => f128,
+                else => @compileError("bit size not supported " ++ std.fmt.comptimePrint("{d}", .{bits}) ++ " bits"),
             };
         }
 
@@ -234,7 +257,76 @@ pub inline fn coercions(any: anytype, comptime cfg: CoercionsConfigs) ret_T: {
     unreachable;
 }
 
-test "c to zig primitive coercion" {
+test "coerce.loose: comptime type reflection testing" {
+    const tt = @Tuple(&.{
+        u64,
+        u32,
+        u16,
+        u8,
+        i8,
+        i16,
+        i32,
+        i64,
+        f32,
+        f64,
+    });
+    const tv = tt{
+        @as(u64, 64),
+        @as(u32, 32),
+        @as(u16, 16),
+        @as(u8, 8),
+        @as(i8, 8),
+        @as(i16, 16),
+        @as(i32, 32),
+        @as(i64, 64),
+        @as(f32, 32.32),
+        @as(f64, 64.64),
+    };
+
+    inline for (tv) |v| {
+        const nt = coerce.loose.Primitive(@TypeOf(v));
+        std.debug.print("converted from type {any} -> {any}\n", .{ @TypeOf(v), nt });
+    }
+}
+
+test "coerce.strict: comptime type reflection testing" {
+    const tt = @Tuple(&.{
+        c_char,
+        c_short,
+        c_ushort,
+        c_int,
+        c_uint,
+        c_long,
+        c_ulong,
+        c_longlong,
+        c_ulonglong,
+        f32,
+        f64,
+        c_longdouble,
+    });
+
+    const tv = tt{
+        @as(c_char, 0),
+        @as(c_short, 0),
+        @as(c_ushort, 0),
+        @as(c_int, 0),
+        @as(c_uint, 0),
+        @as(c_long, 0),
+        @as(c_ulong, 0),
+        @as(c_longlong, 0),
+        @as(c_ulonglong, 0),
+        @as(f32, 0),
+        @as(f64, 0),
+        @as(c_longdouble, 0),
+    };
+
+    inline for (tv) |v| {
+        const nt = coerce.strict.Primitive(@TypeOf(v));
+        std.debug.print("converted from type {any} -> {any}\n", .{ @TypeOf(v), nt });
+    }
+}
+
+test "coercions: test coercion from C primitive to zig" {
     const Test_types = @Tuple(&.{
         c_longlong,
         c_ulong,
@@ -246,22 +338,17 @@ test "c to zig primitive coercion" {
         @as(c_int, 32),
     };
 
-    inline for (t_val, 0..) |v, i| {
-        const expect_type =
-            switch (i) {
-                0 => @Int(.signed, 64),
-                1 => @Int(.unsigned, 64),
-                2 => @Int(.signed, 32),
-                else => @compileError("how did we get here"),
-            };
+    inline for (t_val) |v| {
+        const expect_type = coerce.strict.Primitive(@TypeOf(v));
+
         const r_val = coercions(v, .{ .to = .zig });
-        std.debug.print("the type is: {any}\n", .{@TypeOf(r_val)});
         try std.testing.expect(@TypeOf(r_val) == expect_type);
+        try std.testing.expect(r_val == v);
     }
 }
 
 // NOTE: this case is this shitty find better solution later
-test "zig to C primtivie Coercion" {
+test "coercions: test coercions from zig primitive to C" {
     const Test_types = @Tuple(&.{
         u64,
         u8,
@@ -273,16 +360,10 @@ test "zig to C primtivie Coercion" {
         @as(i32, 32),
     };
 
-    inline for (t_val, 0..) |v, i| {
-        const expect_type =
-            switch (i) {
-                0 => c_ulonglong,
-                1 => c_char,
-                2 => c_int,
-                else => @compileError("how did we get here"),
-            };
-        const r_val = coercions(v, .{ .to = .zig });
-        std.debug.print("the type is: {any}\n", .{@TypeOf(r_val)});
+    inline for (t_val) |v| {
+        const expect_type = coerce.loose.Primitive(@TypeOf(v));
+        const r_val = coercions(v, .{ .to = .c });
         try std.testing.expect(@TypeOf(r_val) == expect_type);
+        try std.testing.expect(r_val == v);
     }
 }
