@@ -12,13 +12,13 @@ const EasyError = error{
 ptr: *curl.CURL,
 
 /// initiate easy interface
-pub fn init() !Self {
+pub inline fn init() !Self {
     return Self{
         .ptr = curl.curl_easy_init() orelse return EasyError.initFailed,
     };
 }
 
-pub fn cleanup(self: *Self) void {
+pub inline fn cleanup(self: *Self) void {
     curl.curl_easy_cleanup(self.ptr);
 }
 
@@ -39,6 +39,6 @@ pub fn setopt(self: *Self, comptime option: bridge.CurlOpt, arg: anytype) bridge
     return bridge.CurlE.errorFromEnum(@enumFromInt(code));
 }
 
-pub fn perform(self: *Self) !void {
+pub inline fn perform(self: *Self) !void {
     curl.curl_easy_perform(self.ptr);
 }
