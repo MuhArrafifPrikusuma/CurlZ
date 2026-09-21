@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c");
+const c = @import("curl.zig");
 
 const CurlCodes = union(enum) {
     code: c.CURLcode,
