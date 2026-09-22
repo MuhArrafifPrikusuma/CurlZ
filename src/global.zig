@@ -1,21 +1,20 @@
 const std = @import("std");
-const c = @import("curl.zig");
+const c = @import("c");
 
 const Diagnostics = @import("Diagnostics.zig");
 
 const Self = @This();
 
+pub var diagnostic: Diagnostics = .{};
+
 const Flags = enum(c_int) {
     all = c.CURL_GLOBAL_ALL,
     winsock = c.CURL_GLOBAL_WIN32,
     nothing = c.CURL_GLOBAL_NOTHING,
-    default = c.CURL_GLOBAL_DEFAULT,
 };
 
-diagnostics: Diagnostics,
-
-pub inline fn init(self: *Self, flags: Flags) !void {
-    try self.diagnostics.checkError(c.curl_global_init(flags));
+pub inline fn init(flags: Flags) !void {
+    try diagnostic.checkError(c.curl_global_init(@intFromEnum(flags)));
 }
 
 pub inline fn cleanup() void {
