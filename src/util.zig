@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("curl.zig");
+const c = @import("c");
 
 comptime {
     if (!@hasDecl(c, "CURL_AT_LEAST_VERSION"))

@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("curl.zig");
+const c = @import("c");
 
 const Writer = std.Io.Writer;
 
@@ -21,6 +21,7 @@ fn header_strerr(code: c.CURLHcode) []const u8 {
         4 => "Header error: No Request",
         5 => "Header error: Out Of Memory",
         6 => "Header error: Bad Argument",
+        else => @panic("Header error: Invalid Header Code"),
     };
 }
 

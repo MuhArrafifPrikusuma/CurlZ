@@ -1,5 +1,7 @@
 const std = @import("std");
-const c = @import("c");
+const c = @import("curl.zig");
+const ziglings = @import("ziglings.zig");
+const curlz = @import("root.zig");
 
 const Easy = @import("Easy.zig");
 const Diagnostic = @import("Diagnostics.zig");
@@ -25,6 +27,11 @@ pub const WaitFd = struct {
     }
 };
 
+pub const Info = struct {
+    msg_in_queue: u32,
+    msg: *curlz.CurlMsg,
+};
+
 mhandle: *c.CURLM,
 diagnostic: Diagnostic,
 
@@ -48,13 +55,27 @@ pub inline fn perform(self: *Self, running_handles: *c_int) !void {
     try self.diagnostic.checkMError(c.curl_multi_perform(self.mhandle, running_handles));
 }
 
-pub inline fn removeHandle(self: *Self, handle: *c.CURL) !void {
-    try self.diagnostic.checkMError(c.curl_multi_remove_handle(self.mhandle, handle));
+pub inline fn removeHandle(self: *Self, easy: *Easy) !void {
+    try self.diagnostic.checkMError(c.curl_multi_remove_handle(self.mhandle, easy.handle));
 }
 
-pub inline fn addHandle(self: *Self, handle: *Easy) !void {
-    try handle.setCommonOptions();
-    try self.diagnostic.checkMError(c.curl_multi_add_handle(self.mhandle, handle.handle));
+pub inline fn addHandle(self: *Self, easy: *Easy) !void {
+    try easy.setCommonOptions();
+    try self.diagnostic.checkMError(c.curl_multi_add_handle(self.mhandle, easy.handle));
+}
+
+pub fn readInfo(self: *Self) !Info {
+    var msg_in_queue: u32 = 0;
+    const msgData: ?*c.struct_CURLMsg = c.curl_multi_info_read(self.mhandle, @ptrCast(&msg_in_queue));
+
+    if (msgData == null) {
+        return error.FailedtoReadInfo;
+    }
+
+    return Info{
+        .msg_in_queue = msg_in_queue,
+        .msg = msgData.?,
+    };
 }
 
 pub fn poll(self: *Self, extra_fds: ?[]WaitFd, timeout_ms: u32) !u32 {
