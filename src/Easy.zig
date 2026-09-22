@@ -8,9 +8,6 @@ const Self = @This();
 
 const Socket = c_int;
 
-const EasyError = error{
-    initFailed,
-};
 /// pointer to curl easy
 handle: *c.CURL,
 timeout_ms: usize,
@@ -63,7 +60,15 @@ pub const Response = struct {
 pub const Info = enum(c_int) {
     active_socket = c.CURLINFO_ACTIVESOCKET,
     private = c.CURLINFO_PRIVATE,
-    responseCode = c.CURLINFO_RESPONSE_CODE,
+    response_code = c.CURLINFO_RESPONSE_CODE,
+
+    fn ArgType(self: Info) type {
+        return switch (self) {
+            .active_socket => *Socket,
+            .private => *anyopaque,
+            .response_code => *c_long,
+        };
+    }
 };
 
 /// Init options for easy handle
@@ -104,16 +109,7 @@ pub inline fn dupHandle(self: *Self) !*c.CURL {
     return c.curl_easy_duphandle(self.handle) orelse error.CurlInit;
 }
 
-fn InfoArgType(info: Info) type {
-    return switch (info) {
-        .active_socket => *Socket,
-        .private => *anyopaque,
-        .responseCode => *c_long,
-    };
-}
-
-/// NOTE: info will definitely be important later but don't do it know since it would probably take a while
-pub inline fn getInfo(self: *Self, comptime info: Info, arg: InfoArgType(info)) !void {
+pub inline fn getInfo(self: *Self, comptime info: Info, arg: info.ArgType()) !void {
     try self.diagnostic.checkError(c.curl_easy_getinfo(self.handle, @intFromEnum(info), arg));
 }
 
@@ -122,7 +118,7 @@ pub fn perform(self: *Self) !Response {
     try self.diagnostic.checkError(c.curl_easy_perform(self.handle));
 
     var status_code: c_long = 0;
-    try self.getInfo(.responseCode, &status_code);
+    try self.getInfo(.response_code, &status_code);
     return Response{
         .handle = self.handle,
         .status_code = @intCast(status_code),
