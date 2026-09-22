@@ -257,6 +257,14 @@ pub inline fn coercions(any: anytype, comptime cfg: CoercionsConfigs) ret_T: {
     unreachable;
 }
 
+pub fn pointerSize(T: type) std.builtin.Type.Pointer.Size {
+    return switch (@typeInfo(T)) {
+        .optional => |optional_info| pointerSize(optional_info.child),
+        .pointer => |ptr_info| ptr_info.size,
+        else => @compileError("expected pointer type found: " ++ @typeName(T)),
+    };
+}
+
 test "coerce.loose: comptime type reflection testing" {
     const tt = @Tuple(&.{
         u64,
