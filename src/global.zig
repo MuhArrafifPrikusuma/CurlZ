@@ -17,6 +17,6 @@ pub inline fn init(flags: Flags) !void {
     try diagnostic.checkError(c.curl_global_init(@intFromEnum(flags)));
 }
 
-pub inline fn cleanup() void {
+pub inline fn deinit() void {
     c.curl_global_cleanup();
 }

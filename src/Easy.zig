@@ -76,8 +76,9 @@ pub const Options = struct {
     /// default 60 second
     default_timeout_ms: usize = 60_000,
     /// NOTE: add version number later
-    default_user_agent: [:0]const u8 = "CurlZ/",
+    default_user_agent: [:0]const u8 = "CurlZ/" ++ @import("build_info").version,
 };
+
 /// initiate easy interface
 pub inline fn init(opt: Options) !Self {
     return Self{
@@ -114,7 +115,7 @@ pub inline fn getInfo(self: *Self, comptime info: Info, arg: info.ArgType()) !vo
 }
 
 pub fn perform(self: *Self) !Response {
-    try self.setCommonOptions();
+    try self.setCommonOpt();
     try self.diagnostic.checkError(c.curl_easy_perform(self.handle));
 
     var status_code: c_long = 0;
@@ -172,7 +173,7 @@ pub fn fetch(self: *Self, url: [:0]const u8, opt: FetchOptions) !Response {
     return try self.perform();
 }
 
-pub inline fn setCommonOptions(self: *Self) !void {
+pub inline fn setCommonOpt(self: *Self) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_TIMEOUT_MS, self.timeout_ms));
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_USERAGENT, self.user_agent.ptr));
 }

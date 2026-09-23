@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("curl.zig");
+const c = @import("c");
 const ziglings = @import("ziglings.zig");
 const curlz = @import("root.zig");
 

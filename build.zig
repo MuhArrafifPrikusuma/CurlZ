@@ -2,20 +2,26 @@ const std = @import("std");
 const Build = std.Build;
 const Module = std.Build.Module;
 
-pub fn build(b: *Build) void {
+pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const manifest = try parseManifest(b);
+    defer manifest.deinit(b.allocator);
+
+    const opt = b.addOptions();
+    opt.addOption([]const u8, "version", manifest.version);
+    const build_info_mod = opt.createModule();
 
     const mod = b.addModule("CurlZ", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
-    mod.link_libc = true;
-
-    const libcurl = createCBindingsModule(b, target, optimize);
-    mod.addImport("c", libcurl);
+    const c_module = createCBindingsModule(b, target, optimize);
+    mod.addImport("c", c_module);
+    mod.addImport("build_info", build_info_mod);
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -75,4 +81,31 @@ fn createCBindingsModule(
     translate_c.linkSystemLibrary("curl", .{});
 
     return translate_c.createModule();
+}
+
+const Manifest = struct {
+    version: []const u8,
+
+    fn deinit(self: Manifest, allocator: std.mem.Allocator) void {
+        allocator.free(self.version);
+    }
+};
+
+fn parseManifest(b: *Build) !Manifest {
+    const input = @embedFile("build.zig.zon");
+    var diagnostic: std.zon.parse.Diagnostics = .{};
+    defer diagnostic.deinit(b.allocator);
+
+    const parsed = std.zon.parse.fromSliceAlloc(
+        Manifest,
+        b.allocator,
+        input,
+        &diagnostic,
+        .{ .free_on_error = true, .ignore_unknown_fields = true },
+    ) catch |err| {
+        std.debug.print("parse error: \n{f}\n", .{diagnostic});
+        return err;
+    };
+
+    return parsed;
 }
