@@ -4,6 +4,7 @@ const ziglings = @import("ziglings.zig");
 
 const Diagnostic = @import("Diagnostics.zig");
 
+const Headers = @import("root.zig").Headers;
 const Self = @This();
 
 const Socket = c_int;
@@ -13,20 +14,6 @@ handle: *c.CURL,
 timeout_ms: usize,
 user_agent: [:0]const u8,
 diagnostic: Diagnostic,
-
-pub const Headers = struct {
-    headers: *c.curl_slist = null,
-
-    pub fn deinit(self: *Headers) !void {
-        if (self.headers) |h| {
-            c.curl_slist_free_all(h);
-        }
-    }
-
-    pub fn add(self: *Headers, header: [:0]const u8) !void {
-        self.headers = c.curl_slist_append(self.headers, header.ptr) orelse return error.Curl_slist_append;
-    }
-};
 
 pub const Method = enum {
     GET,
