@@ -64,6 +64,8 @@ pub inline fn addHandle(self: *Self, easy: *Easy) !void {
     try self.diagnostic.checkMError(c.curl_multi_add_handle(self.mhandle, easy.handle));
 }
 
+/// read info from easy handler and return Info, easy_handle from Info.msg.easy_handle can be wrapped
+/// using Easy.wrap
 pub fn readInfo(self: *Self) !Info {
     var msg_in_queue: u32 = 0;
     const msgData: ?*c.struct_CURLMsg = c.curl_multi_info_read(self.mhandle, @ptrCast(&msg_in_queue));

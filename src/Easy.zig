@@ -125,6 +125,31 @@ pub fn perform(self: *Self) !Response {
     };
 }
 
+/// wrap an existing easy handle
+pub fn wrap(handle: *c.CURL, opt: Options) Self {
+    return Self{
+        .handle = handle,
+        .diagnostic = .{},
+        .timeout_ms = opt.default_timeout_ms,
+        .user_agent = opt.default_user_agent,
+    };
+}
+
+pub const Swap = union(enum) {
+    handle: *c.CURL,
+    opt: Options,
+};
+
+pub fn swapField(self: *Self, swap: Swap) void {
+    switch (swap) {
+        .opt => |opt| {
+            self.timeout_ms = opt.default_timeout_ms;
+            self.user_agent = opt.default_user_agent;
+        },
+        .handle => |h| self.handle = h,
+    }
+}
+
 /// send request from fetchoptions to the specified url
 pub fn fetch(self: *Self, url: [:0]const u8, opt: FetchOptions) !Response {
     try self.setUrl(url);
