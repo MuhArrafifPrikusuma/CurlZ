@@ -97,6 +97,38 @@ pub inline fn dupHandle(self: *Self) !*c.CURL {
     return c.curl_easy_duphandle(self.handle) orelse error.CurlInit;
 }
 
+pub const Callback = enum(c_int) {
+    write = c.CURLOPT_WRITEFUNCTION,
+    read = c.CURLOPT_READFUNCTION,
+    header = c.CURLOPT_HEADERFUNCTION,
+
+    pub fn signature(self: Callback) struct {
+        @"fn": type,
+        data: c_int,
+    } {
+        return switch (self) {
+            .write => .{
+                .@"fn" = *const fn ([*:0]const u8, usize, usize, ?*anyopaque) callconv(.c) usize,
+                .data = c.CURLOPT_WRITEDATA,
+            },
+            .read => .{
+                .@"fn" = *const fn ([*:0]u8, usize, usize, ?*anyopaque) callconv(.c) usize,
+                .data = c.CURLOPT_READDATA,
+            },
+            .header => .{
+                .@"fn" = *const fn ([*:0]u8, usize, usize, ?*anyopaque) callconv(.c) usize,
+                .data = c.CURLOPT_HEADERDATA,
+            },
+            else => @compileError("not supported"),
+        };
+    }
+};
+
+pub inline fn setCallback(self: *Self, comptime cb: Callback, @"fn": cb.signature().@"fn", data: *anyopaque) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, @intFromEnum(cb)), @"fn"));
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, @intFromEnum(cb.signature().data)), data));
+}
+
 pub inline fn getInfo(self: *Self, comptime info: Info, arg: info.ArgType()) !void {
     try self.diagnostic.checkError(c.curl_easy_getinfo(self.handle, @intFromEnum(info), arg));
 }
