@@ -44,7 +44,7 @@ pub fn init() !Self {
 
 pub inline fn deinit(self: *Self) void {
     std.debug.assert(self.diagnostic.checkMError(c.curl_multi_cleanup(self.mhandle)) != error.Curlm);
-    self.diagnostic.checkMError(c.curl_multi_cleanup(self.mhandle)) catch {};
+    self.diagnostic.checkMError(c.curl_multi_cleanup(self.mhandle)) catch unreachable;
 }
 
 pub inline fn wakeup(self: *Self) !void {
