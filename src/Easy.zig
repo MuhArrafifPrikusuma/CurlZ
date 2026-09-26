@@ -1,10 +1,12 @@
 const std = @import("std");
-const c = @import("curl.zig");
+const c = @import("c");
 const ziglings = @import("ziglings.zig");
 
 const Diagnostic = @import("Diagnostics.zig");
 
 const Headers = @import("root.zig").Headers;
+const InfoType = @import("root.zig").InfoType;
+
 const Self = @This();
 
 const Socket = c_int;
@@ -102,31 +104,47 @@ pub const Callback = enum(c_int) {
     read = c.CURLOPT_READFUNCTION,
     header = c.CURLOPT_HEADERFUNCTION,
 
+    close_socket = c.CURLOPT_CLOSESOCKETFUNCTION,
+
+    debug = c.CURLOPT_DEBUGFUNCTION,
+
     pub fn signature(self: Callback) struct {
-        @"fn": type,
+        callback_func: type,
         data: c_int,
     } {
         return switch (self) {
             .write => .{
-                .@"fn" = *const fn ([*:0]const u8, usize, usize, ?*anyopaque) callconv(.c) usize,
+                .callback_func = *const fn ([*:0]const u8, usize, usize, ?*anyopaque) callconv(.c) usize,
                 .data = c.CURLOPT_WRITEDATA,
             },
             .read => .{
-                .@"fn" = *const fn ([*:0]u8, usize, usize, ?*anyopaque) callconv(.c) usize,
+                .callback_func = *const fn ([*:0]u8, usize, usize, ?*anyopaque) callconv(.c) usize,
                 .data = c.CURLOPT_READDATA,
             },
             .header => .{
-                .@"fn" = *const fn ([*:0]u8, usize, usize, ?*anyopaque) callconv(.c) usize,
+                .callback_func = *const fn ([*:0]u8, usize, usize, ?*anyopaque) callconv(.c) usize,
                 .data = c.CURLOPT_HEADERDATA,
             },
-            else => @compileError("not supported"),
+            .close_socket => .{
+                .callback_func = *const fn (?*anyopaque, c.curl_socket_t) callconv(.c) c_int,
+                .data = c.CURLOPT_HEADERDATA,
+            },
+            .debug => .{
+                .callback_func = *const fn (*c.CURL, InfoType, [*:0]u8, usize, ?*anyopaque) callconv(.c) c_int,
+                .data = c.CURLOPT_DEBUGDATA,
+            },
         };
     }
 };
 
-pub inline fn setCallback(self: *Self, comptime cb: Callback, @"fn": cb.signature().@"fn", data: *anyopaque) !void {
-    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, @intFromEnum(cb)), @"fn"));
-    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, @intFromEnum(cb.signature().data)), data));
+pub inline fn setCallback(
+    self: *Self,
+    comptime cb: Callback,
+    func: cb.signature().callback_func,
+    data: ?*anyopaque,
+) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, @intFromEnum(cb)), func));
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, cb.signature().data), data));
 }
 
 pub inline fn getInfo(self: *Self, comptime info: Info, arg: info.ArgType()) !void {
@@ -192,7 +210,68 @@ pub fn fetch(self: *Self, url: [:0]const u8, opt: FetchOptions) !Response {
     return try self.perform();
 }
 
+/// pass to setCallback(.write) to discard responses
+/// instead of writing to stdout
+pub fn discard_write_callback(
+    ptr: [*:0]const u8,
+    size: usize,
+    nmemb: usize,
+    userdata: ?*anyopaque,
+) callconv(.c) usize {
+    _ = ptr;
+    _ = size;
+    _ = userdata;
+    return nmemb;
+}
+
 pub inline fn setCommonOpt(self: *Self) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_TIMEOUT_MS, self.timeout_ms));
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_USERAGENT, self.user_agent.ptr));
+}
+
+test "fetch" {
+    // try @import("root.zig").global.init(.all);
+    // defer @import("root.zig").global.deinit();
+
+    var easy = try Self.init(.{});
+    defer easy.deinit();
+
+    const res = easy.fetch("127.0.0.1:8080", .{ .method = .GET }) catch |err| {
+        std.debug.print("{?s}\n", .{easy.diagnostic.getMessage()});
+        return err;
+    };
+    _ = res;
+}
+
+test "swap and wrap" {
+    try @import("root.zig").global.init(.all);
+    @import("root.zig").global.deinit();
+
+    var easy = try Self.init(.{});
+    defer easy.deinit();
+
+    const pref = easy.handle;
+    try std.testing.expect(pref == easy.handle);
+
+    var new_easy = try Self.init(.{});
+    defer new_easy.deinit();
+    easy.swapField(.{ .handle = new_easy.handle });
+
+    try std.testing.expect(easy.handle != pref);
+
+    var wrap_easy = Self.wrap(pref, .{});
+    try wrap_easy.setUrl("127.0.0.1:8080");
+    try wrap_easy.setMethod(.GET);
+
+    _ = try wrap_easy.perform();
+}
+
+test "setCallback" {
+    try @import("root.zig").global.init(.all);
+    @import("root.zig").global.deinit();
+
+    var easy = try Self.init(.{});
+    defer easy.deinit();
+
+    try easy.setCallback(.write, discard_write_callback, null);
 }

@@ -1,0 +1,26 @@
+name: Auto test
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goto-bus-stop/setup-zig@v1
+        with:
+          version: master
+
+      - name: Install libcurl development package
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev pkg-config
+
+      - name: build test bin
+        run: zig build test --summary all

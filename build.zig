@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Build = std.Build;
 const Module = std.Build.Module;
 
@@ -18,51 +19,31 @@ pub fn build(b: *Build) !void {
         .optimize = optimize,
         .link_libc = true,
     });
-
     const c_module = createCBindingsModule(b, target, optimize);
     mod.addImport("c", c_module);
     mod.addImport("build_info", build_info_mod);
 
-    const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "curlZ", .module = mod },
-        },
+    const test_file = b.option([]const u8, "test-filter", "test specific file");
+    const test_source_file = if (test_file) |file|
+        b.path(file)
+    else
+        b.path("src/root.zig");
+
+    const mod_test = b.addTest(.{
+        .root_module = b.addModule("mod_test", .{
+            .root_source_file = test_source_file,
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
     });
-
-    const exe = b.addExecutable(.{
-        .name = "example",
-        .root_module = exe_mod,
-    });
-
-    if (optimize == .debug) {
-        exe.root_module.sanitize_c = .full;
-        exe.root_module.sanitize_thread = true;
-    }
-    if (optimize == .fast or optimize == .small) {
-        exe.root_module.strip = true;
-        exe.discard_local_symbols = true;
-    }
-
-    b.installArtifact(exe);
-
-    const run_step = b.step("run", "Run the app");
-    const run_cmd = b.addRunArtifact(exe);
-    run_step.dependOn(&run_cmd.step);
-    run_cmd.step.dependOn(b.getInstallStep());
-    run_cmd.addPassthruArgs();
+    mod_test.root_module.addImport("c", c_module);
+    mod_test.root_module.addImport("build_info", build_info_mod);
 
     const test_step = b.step("test", "Run tests");
 
-    const mod_tests = b.addTest(.{ .root_module = mod });
-    const run_mod_tests = b.addRunArtifact(mod_tests);
+    const run_mod_tests = b.addRunArtifact(mod_test);
     test_step.dependOn(&run_mod_tests.step);
-
-    const exe_tests = b.addTest(.{ .root_module = exe.root_module });
-    const run_exe_tests = b.addRunArtifact(exe_tests);
-    test_step.dependOn(&run_exe_tests.step);
 }
 
 fn createCBindingsModule(
