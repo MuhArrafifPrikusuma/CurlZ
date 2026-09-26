@@ -29,6 +29,12 @@ pub fn build(b: *Build) !void {
     else
         b.path("src/root.zig");
 
+    const test_server = b.addModule("mock server for testing", .{
+        .root_source_file = b.path("test/test_server.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const mod_test = b.addTest(.{
         .root_module = b.addModule("mod_test", .{
             .root_source_file = test_source_file,
@@ -37,6 +43,7 @@ pub fn build(b: *Build) !void {
             .link_libc = true,
         }),
     });
+    mod_test.root_module.addImport("testServer", test_server);
     mod_test.root_module.addImport("c", c_module);
     mod_test.root_module.addImport("build_info", build_info_mod);
 
