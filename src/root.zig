@@ -9,11 +9,12 @@ pub const Multi = @import("Multi.zig");
 pub const global = @import("global.zig");
 
 pub const CurlMsg = c.struct_CURLMsg;
+pub const InfoType = c.curl_infotype;
 
 pub const Headers = struct {
-    headers: *c.curl_slist = null,
+    headers: ?*c.curl_slist = null,
 
-    pub fn deinit(self: *Headers) !void {
+    pub fn deinit(self: Headers) void {
         if (self.headers) |h| {
             c.curl_slist_free_all(h);
         }
