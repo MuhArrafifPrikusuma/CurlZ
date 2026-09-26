@@ -1,0 +1,21 @@
+name: Auto test
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goto-bus-stop/setup-zig@v1
+        with:
+          version: master
+
+      - name: build test bin
+        run: zig build test --summary all
