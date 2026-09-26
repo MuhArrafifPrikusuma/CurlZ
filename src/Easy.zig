@@ -2,6 +2,8 @@ const std = @import("std");
 const c = @import("c");
 const ziglings = @import("ziglings.zig");
 
+const testServer = @import("testServer");
+
 const Diagnostic = @import("Diagnostics.zig");
 
 const Headers = @import("root.zig").Headers;
@@ -230,20 +232,24 @@ pub inline fn setCommonOpt(self: *Self) !void {
 }
 
 test "fetch" {
-    // try @import("root.zig").global.init(.all);
-    // defer @import("root.zig").global.deinit();
+    try testServer.ensureRunning();
+
+    try @import("root.zig").global.init(.all);
+    defer @import("root.zig").global.deinit();
 
     var easy = try Self.init(.{});
     defer easy.deinit();
 
-    const res = easy.fetch("127.0.0.1:8080", .{ .method = .GET }) catch |err| {
-        std.debug.print("{?s}\n", .{easy.diagnostic.getMessage()});
+    const res = easy.fetch(testServer.server_url, .{ .method = .GET }) catch |err| {
+        std.testing.failPrint("{?s}\n", .{easy.diagnostic.getMessage()});
         return err;
     };
     _ = res;
 }
 
 test "swap and wrap" {
+    try testServer.ensureRunning();
+
     try @import("root.zig").global.init(.all);
     @import("root.zig").global.deinit();
 
@@ -260,18 +266,27 @@ test "swap and wrap" {
     try std.testing.expect(easy.handle != pref);
 
     var wrap_easy = Self.wrap(pref, .{});
-    try wrap_easy.setUrl("127.0.0.1:8080");
+
+    try wrap_easy.setUrl(testServer.server_url);
     try wrap_easy.setMethod(.GET);
 
-    _ = try wrap_easy.perform();
+    _ = wrap_easy.perform() catch |err| {
+        std.testing.failPrint("{s}: {?s}\n", .{ testServer.server_url, wrap_easy.diagnostic.getMessage() });
+        return err;
+    };
 }
 
 test "setCallback" {
+    try testServer.ensureRunning();
+
     try @import("root.zig").global.init(.all);
     @import("root.zig").global.deinit();
 
     var easy = try Self.init(.{});
     defer easy.deinit();
 
-    try easy.setCallback(.write, discard_write_callback, null);
+    easy.setCallback(.write, discard_write_callback, null) catch |err| {
+        std.testing.failPrint("{?s}\n", .{easy.diagnostic.getMessage()});
+        return err;
+    };
 }
