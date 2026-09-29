@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c");
 const ziglings = @import("ziglings.zig");
+const util = @import("util.zig");
 
 const testServer = @import("testServer");
 
@@ -151,6 +152,13 @@ pub inline fn setCallback(
 
 pub inline fn getInfo(self: *Self, comptime info: Info, arg: info.ArgType()) !void {
     try self.diagnostic.checkError(c.curl_easy_getinfo(self.handle, @intFromEnum(info), arg));
+}
+
+pub inline fn getHeader() void {
+    comptime util.hasHeaderSupport(@src());
+}
+test "header" {
+    getHeader();
 }
 
 pub fn perform(self: *Self) !Response {
