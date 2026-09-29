@@ -21,7 +21,7 @@ fn header_strerr(code: c.CURLHcode) []const u8 {
         4 => "Header error: No Request",
         5 => "Header error: Out Of Memory",
         6 => "Header error: Bad Argument",
-        else => @panic("Header error: Invalid Header Code"),
+        else => std.debug.panic("Panic!: Invalid error code: {d}\n", .{code}),
     };
 }
 
@@ -35,13 +35,13 @@ pub fn getMessage(self: *Self) ?[]const u8 {
 }
 
 /// print raw message from curl, return null if there is no message
-pub inline fn printMessage(self: *Self, writer: *Writer) ?void {
+pub fn printMessage(self: *Self, writer: *Writer) ?void {
     if (self.getMessage()) |msg| {
         try writer.print("{s}", .{msg});
     } else return null;
 }
 
-pub inline fn checkError(self: *Self, code: c.CURLcode) !void {
+pub fn checkError(self: *Self, code: c.CURLcode) !void {
     if (code == c.CURLE_OK)
         return;
 
@@ -49,7 +49,7 @@ pub inline fn checkError(self: *Self, code: c.CURLcode) !void {
     return error.Curl;
 }
 
-pub inline fn checkMError(self: *Self, mcode: c.CURLMcode) !void {
+pub fn checkMError(self: *Self, mcode: c.CURLMcode) !void {
     if (mcode == c.CURLM_OK)
         return;
 
@@ -57,7 +57,7 @@ pub inline fn checkMError(self: *Self, mcode: c.CURLMcode) !void {
     return error.Curlm;
 }
 
-pub inline fn checkHError(self: *Self, hcode: c.CURLHcode) !void {
+pub fn checkHError(self: *Self, hcode: c.CURLHcode) !void {
     if (hcode == c.CURLHE_OK)
         return;
 

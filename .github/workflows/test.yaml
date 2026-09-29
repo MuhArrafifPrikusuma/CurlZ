@@ -1,4 +1,4 @@
-name: Auto test
+name: test
 
 on:
   pull_request:
@@ -19,8 +19,8 @@ jobs:
 
       - name: Install libcurl development package
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev pkg-config
+          sudo apt update
+          sudo apt install -y libcurl4-openssl-dev pkg-config
 
       - name: build test bin
         run: zig build test --summary all
