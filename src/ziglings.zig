@@ -2,7 +2,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-fn isPrimitive(comptime T: type) bool {
+pub fn isPrimitive(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .optional => |optional_info| isPrimitive(optional_info.child),
         .void, .type, .noreturn => @compileError("Cannot coerce Type" ++ @typeName(T)),
@@ -12,7 +12,7 @@ fn isPrimitive(comptime T: type) bool {
     };
 }
 
-fn isPtr(T: type) bool {
+pub fn isPtr(T: type) bool {
     return switch (@typeInfo(T)) {
         .optional => |optional_info| @typeInfo(optional_info.child) == .pointer,
         .pointer => true,

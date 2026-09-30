@@ -1,14 +1,20 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c");
+const testServer = @import("testServer");
+
+const util = @import("util.zig");
 const ziglings = @import("ziglings.zig");
-const curlz = @import("root.zig");
 
 const Easy = @import("Easy.zig");
 const Diagnostic = @import("Diagnostics.zig");
 
-const Self = @This();
+const CurlMsg = @import("root.zig").CurlMsg;
+const CurlM = @import("root.zig").CurlM;
+const Curl = @import("root.zig").Curl;
+const Socket = @import("root.zig").Socket;
 
-const Socket = c_int;
+const Self = @This();
 
 const WaitEvents = packed struct(@Int(.signed, @bitSizeOf(c_short))) {
     pollin: bool = false,
@@ -27,12 +33,48 @@ pub const WaitFd = struct {
     }
 };
 
-pub const Info = struct {
-    msg_in_queue: u32,
-    msg: *curlz.CurlMsg,
+pub const HandleOrWrapper = union(enum) {
+    handle: *Curl,
+    wrapper: *Easy,
 };
 
-mhandle: *c.CURLM,
+pub const Info = struct {
+    msg_in_queue: u32,
+    msg: *CurlMsg,
+};
+
+pub const Notification = enum(c_uint) {
+    info_read = c.CURLMNOTIFY_INFO_READ,
+    easy_done = c.CURLMNOTIFY_EASY_DONE,
+};
+
+pub const Callback = enum(c_int) {
+    notify = c.CURLMOPT_NOTIFYFUNCTION,
+    socket = c.CURLMOPT_SOCKETFUNCTION,
+    timer = c.CURLMOPT_TIMERFUNCTION,
+
+    pub fn signature(self: Callback) struct {
+        callback_fn: type,
+        data: c_int,
+    } {
+        return switch (self) {
+            .notify => .{
+                .callback_fn = *const fn (*CurlM, c_uint, *Curl, *anyopaque) callconv(.c) void,
+                .data = c.CURLMOPT_NOTIFYDATA,
+            },
+            .socket => .{
+                .callback_fn = *const fn (*Curl, Socket, c_int, *anyopaque, *anyopaque) c_int,
+                .data = c.CURLMOPT_SOCKETDATA,
+            },
+            .timer => .{
+                .callback_fn = *const fn (*CurlM, c_long, *anyopaque) callconv(.c) c_int,
+                .data = c.CURLMOPT_TIMERDATA,
+            },
+        };
+    }
+};
+
+mhandle: *CurlM,
 diagnostic: Diagnostic,
 
 pub fn init() !Self {
@@ -43,25 +85,83 @@ pub fn init() !Self {
 }
 
 pub inline fn deinit(self: *Self) void {
-    std.debug.assert(self.diagnostic.checkMError(c.curl_multi_cleanup(self.mhandle)) != error.Curlm);
-    self.diagnostic.checkMError(c.curl_multi_cleanup(self.mhandle)) catch unreachable;
+    if (builtin.mode == .debug or builtin.mode == .safe)
+        std.debug.assert(self.diagnostic.checkMError(c.curl_multi_cleanup(self.mhandle)) != error.Curlm);
+    if (builtin.mode == .fast or builtin.mode == .small)
+        self.diagnostic.checkMError(c.curl_multi_cleanup(self.mhandle)) catch unreachable;
 }
 
 pub inline fn wakeup(self: *Self) !void {
     try self.diagnostic.checkMError(c.curl_multi_wakeup(self.mhandle));
 }
 
-pub inline fn perform(self: *Self, running_handles: *c_int) !void {
-    try self.diagnostic.checkMError(c.curl_multi_perform(self.mhandle, running_handles));
+pub inline fn assign(self: *Self, sockfd: c.curl_socket_t, sockptr: *anyopaque) !void {
+    try self.diagnostic.checkMError(c.curl_multi_assign(self.mhandle, sockfd, sockptr));
 }
 
-pub inline fn removeHandle(self: *Self, easy: *Easy) !void {
-    try self.diagnostic.checkMError(c.curl_multi_remove_handle(self.mhandle, easy.handle));
+/// return number of running handles that are still running
+pub inline fn perform(self: *Self) !usize {
+    var running_handles: c_int = 0;
+    try self.diagnostic.checkMError(c.curl_multi_perform(self.mhandle, &running_handles));
+    return @intCast(running_handles);
+}
+
+pub inline fn setMaxTotalConnections(self: *Self, amount: usize) !void {
+    try self.diagnostic.checkMError(c.curl_multi_setopt(self.mhandle, c.CURLMOPT_MAX_TOTAL_CONNECTIONS, @as(c_long, @intCast(amount))));
+}
+
+/// set max number of connections to a single host
+pub inline fn setMaxHostConnections(self: *Self, max: usize) !void {
+    try self.diagnostic.checkMError(c.curl_multi_setopt(self.mhandle, c.CURLMOPT_MAX_HOST_CONNECTIONS, @as(c_long, @intCast(max))));
+}
+
+pub inline fn setMaxCacheGrow(self: *Self, max: usize) !void {
+    try self.diagnostic.checkMError(c.curl_multi_setopt(self.mhandle, c.CURLMOPT_MAXCONNECTS, @as(c_long, @intCast(max))));
+}
+
+pub inline fn notifyDisable(self: *Self, notification: Notification) !void {
+    comptime util.expectMultiNotifySupport(@src());
+    try self.diagnostic.checkMError(c.curl_multi_notify_disable(self.mhandle, @intFromEnum(notification)));
+}
+
+pub inline fn notifyEnable(self: *Self, notification: Notification) !void {
+    comptime util.expectMultiNotifySupport(@src());
+    try self.diagnostic.checkMError(c.curl_multi_notify_enable(self.mhandle, @intFromEnum(notification)));
+}
+
+/// get all easy handles
+pub inline fn getHandles(self: *Self) ?[]const *Curl {
+    return std.mem.span(c.curl_multi_get_handles(self.mhandle));
+}
+
+pub inline fn setCallback(
+    self: *Self,
+    comptime cb: Callback,
+    func: cb.signature().callback_fn,
+    data: *anyopaque,
+) !void {
+    try self.diagnostic.checkMError(c.curl_multi_setopt(self.mhandle, @intFromEnum(cb), func));
+    try self.diagnostic.checkMError(c.curl_multi_setopt(self.mhandle, cb.signature().data, data));
 }
 
 pub inline fn addHandle(self: *Self, easy: *Easy) !void {
-    try easy.setCommonOptions();
+    try easy.setCommonOpt();
     try self.diagnostic.checkMError(c.curl_multi_add_handle(self.mhandle, easy.handle));
+}
+
+pub fn removeHandle(self: *Self, easy: HandleOrWrapper) !void {
+    const handle = switch (easy) {
+        .handle => |hndle| hndle,
+        .wrapper => |wrapr| wrapr.handle,
+    };
+    try self.diagnostic.checkMError(c.curl_multi_remove_handle(self.mhandle, handle));
+}
+
+pub fn wrap(mhandle: *CurlM) Self {
+    return .{
+        .diagnostic = .{},
+        .mhandle = mhandle,
+    };
 }
 
 /// read info from easy handler and return Info, easy_handle from Info.msg.easy_handle can be wrapped
@@ -80,10 +180,11 @@ pub fn readInfo(self: *Self) !Info {
     };
 }
 
+/// return the number of file descriptors polled
 pub fn poll(self: *Self, extra_fds: ?[]WaitFd, timeout_ms: u32) !u32 {
     var numfds: c_int = 0;
     var fds: ?[*]c.curl_waitfd = null;
-    var fds_len: c_int = 0;
+    var fds_len: c_uint = 0;
 
     if (extra_fds) |v| {
         fds = @ptrCast(v.ptr);
@@ -91,11 +192,57 @@ pub fn poll(self: *Self, extra_fds: ?[]WaitFd, timeout_ms: u32) !u32 {
     }
 
     try self.diagnostic.checkMError(c.curl_multi_poll(
-        self.handle,
+        self.mhandle,
         fds,
         fds_len,
         @as(c_int, @intCast(timeout_ms)),
         &numfds,
     ));
     return @intCast(numfds);
+}
+
+test "poll" {
+    try testServer.ensureRunning();
+
+    try @import("root.zig").global.init(.all);
+    defer @import("root.zig").global.deinit();
+
+    var multi = try Self.init();
+    const easys: [100]Easy = undefined;
+    for (&easys) |*easy| {
+        var mut_easy: *Easy = @constCast(easy);
+        mut_easy.* = try .init(.{});
+        try mut_easy.setUrl(testServer.server_url);
+        try mut_easy.setMethod(.GET);
+
+        multi.addHandle(mut_easy) catch |err| {
+            std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
+            return err;
+        };
+    }
+
+    while (true) {
+        const running_handles = multi.perform() catch |err| {
+            std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
+            return err;
+        };
+
+        const info = multi.readInfo() catch |err| {
+            std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
+            return err;
+        };
+
+        var easy = Easy.wrap(info.msg.easy_handle.?, .{});
+        var status_code: c_long = 0;
+        try easy.getInfo(.response_code, &status_code);
+        std.debug.print("see return code: {d}\n", .{status_code});
+
+        if (running_handles <= 0) break;
+
+        const active_fds = multi.poll(null, 1000) catch |err| {
+            std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
+            return err;
+        };
+        _ = active_fds;
+    }
 }

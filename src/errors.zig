@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("curl.zig");
+const c = @import("c");
 
 pub const HeaderErrors = error{
     BadIndex,
