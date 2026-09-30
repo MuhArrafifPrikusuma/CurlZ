@@ -1,6 +1,6 @@
 const std = @import("std");
 const root = @import("root");
-const c = @import("c");
+const c = @import("curl.zig");
 
 pub const Socket = c_int;
 
@@ -10,6 +10,8 @@ pub const global = @import("global.zig");
 
 pub const CurlMsg = c.struct_CURLMsg;
 pub const InfoType = c.curl_infotype;
+
+const util = @import("util.zig");
 
 pub const Headers = struct {
     headers: ?*c.curl_slist = null,

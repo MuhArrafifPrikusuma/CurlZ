@@ -1,12 +1,12 @@
 const std = @import("std");
-const c = @import("c");
+const c = @import("curl.zig");
 
 comptime {
     if (!@hasDecl(c, "CURL_AT_LEAST_VERSION"))
         @compileError("Failed to check libcurl version, libcurl version must at least: 7.43.0");
 }
 
-pub fn hasHeaderSupport(comptime src: std.builtin.SourceLocation) void {
+pub fn expectHeaderSupport(comptime src: std.builtin.SourceLocation) void {
     if (c.CURL_AT_LEAST_VERSION(7, 84, 0)) return;
 
     @compileError(std.fmt.comptimePrint(
@@ -16,4 +16,8 @@ pub fn hasHeaderSupport(comptime src: std.builtin.SourceLocation) void {
             src.fn_name,
         },
     ));
+}
+
+pub fn hasHeaderSupport() bool {
+    return c.CURL_AT_LEAST_VERSION(7, 84, 0);
 }

@@ -63,7 +63,8 @@ fn handleConnection(conn: *std.Io.net.Stream, io: std.Io) !void {
     var http = std.http.Server.init(reader, writer);
     var request = try http.receiveHead();
 
-    try request.respond("", .{
-        .status = .ok,
-    });
+    var header: [1]std.http.Header = undefined;
+    header[0] = std.http.Header{ .name = "Content-Type", .value = "text/plain" };
+
+    try request.respond("", .{ .status = .ok, .keep_alive = true, .extra_headers = &header });
 }
