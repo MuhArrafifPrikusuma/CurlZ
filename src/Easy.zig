@@ -1,7 +1,8 @@
 const std = @import("std");
-const c = @import("c");
+const c = @import("curl.zig");
 const ziglings = @import("ziglings.zig");
 const util = @import("util.zig");
+const errors = @import("errors.zig");
 
 const testServer = @import("testServer");
 
@@ -45,8 +46,131 @@ pub const FetchOptions = struct {
 
 pub const Response = struct {
     status_code: u32,
-
     handle: *c.CURL,
+
+    fn PolyFillCurlHeader() type {
+        if (comptime util.hasHeaderSupport()) {
+            return c.struct_curl_header;
+        } else return struct {
+            value: [:0]const u8,
+        };
+    }
+
+    pub const Header = struct {
+        header: *PolyFillCurlHeader(),
+        name: []const u8,
+
+        /// get the header value as slice
+        pub fn getValue(self: Header) []const u8 {
+            return std.mem.span(self.header.value);
+        }
+    };
+
+    pub fn getHeader(self: Response, name: [:0]const u8) errors.HeaderErrors!?Header {
+        util.expectHeaderSupport(@src());
+
+        var header: ?*c.struct_curl_header = null;
+
+        return Response.getHeaderInner(
+            self.handle,
+            name,
+            -1,
+            &header,
+        );
+    }
+
+    fn getHeaderInner(
+        easy: *c.CURL,
+        name: [:0]const u8,
+        request: c_int,
+        hout: *?*c.struct_curl_header,
+    ) errors.HeaderErrors!?Header {
+        const code = c.curl_easy_header(
+            easy,
+            name.ptr,
+            0,
+            c.CURLH_HEADER,
+            request,
+            hout,
+        );
+        errors.headerFrom(code) catch |err| switch (err) {
+            error.Missing, error.NoHeaders => return null,
+            else => return err,
+        };
+        return .{
+            .header = hout.*.?,
+            .name = name,
+        };
+    }
+
+    /// for iterating over response header if there is a redirect
+    pub const HeaderIterator = struct {
+        handle: *c.CURL,
+        name: ?[:0]const u8,
+        request: ?usize = null, // if null use -1 (last)
+        header: ?*PolyFillCurlHeader() = null,
+
+        pub fn next(self: *HeaderIterator) !?Header {
+            util.expectHeaderSupport(@src());
+
+            const request: c_int = if (self.request) |v| @intCast(v) else -1;
+
+            if (self.name) |filter_name| {
+                if (self.header) |h| {
+                    if (h.*.index + 1 == h.*.amount) {
+                        return null;
+                    }
+                } else {
+                    return Response.getHeaderInner(self.handle, filter_name, request, &self.header);
+                }
+            }
+
+            while (c.curl_easy_nextheader(
+                self.handle,
+                c.CURLH_HEADER,
+                request,
+                self.header,
+            )) |h| {
+                self.header = h;
+
+                const name = std.mem.span(h.*.name);
+                if (self.name) |filter_name| {
+                    if (!std.ascii.eqlIgnoreCase(name, filter_name))
+                        continue;
+                }
+
+                return Header{
+                    .header = h,
+                    .name = name,
+                };
+            }
+            return null;
+        }
+    };
+
+    pub const IteratorOptions = struct {
+        /// iterate over headers matching specific names
+        name: ?[:0]const u8 = null,
+        /// which request index you want to iterate over, if left empty then it is the last one
+        request: ?usize = null,
+    };
+
+    pub fn iterateHeaders(self: Response, options: IteratorOptions) HeaderIterator {
+        util.expectHeaderSupport(@src());
+
+        return HeaderIterator{
+            .handle = self.handle,
+            .name = options.name,
+            .request = options.request,
+        };
+    }
+
+    /// get how many times does this request is redirected
+    pub fn getRedirectCount(self: Response, diagnostic: *Diagnostic) !usize {
+        var redirects: c_long = 0;
+        try diagnostic.checkError(c.curl_easy_getinfo(self.handle, c.CURLINFO_REDIRECT_COUNT, &redirects));
+        return @intCast(redirects);
+    }
 };
 
 pub const Info = enum(c_int) {
@@ -88,6 +212,10 @@ pub inline fn deinit(self: *Self) void {
 pub inline fn setUrl(self: *Self, url: [:0]const u8) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
 }
+
+// pub inline fn setRedirect(self: *Self) !void {
+//     c.curl_easy_setopt(self.handle, c.CURLOPT_FOLLOWLOCATION, )
+// }
 
 pub inline fn setMethod(self: *Self, method: Method) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, method.toString().ptr));
@@ -152,13 +280,6 @@ pub inline fn setCallback(
 
 pub inline fn getInfo(self: *Self, comptime info: Info, arg: info.ArgType()) !void {
     try self.diagnostic.checkError(c.curl_easy_getinfo(self.handle, @intFromEnum(info), arg));
-}
-
-pub inline fn getHeader() void {
-    comptime util.hasHeaderSupport(@src());
-}
-test "header" {
-    getHeader();
 }
 
 pub fn perform(self: *Self) !Response {
@@ -239,7 +360,7 @@ pub inline fn setCommonOpt(self: *Self) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_USERAGENT, self.user_agent.ptr));
 }
 
-test "fetch" {
+test "fetch and response" {
     try testServer.ensureRunning();
 
     try @import("root.zig").global.init(.all);
@@ -252,14 +373,18 @@ test "fetch" {
         std.testing.failPrint("{?s}\n", .{easy.diagnostic.getMessage()});
         return err;
     };
-    _ = res;
+
+    const res_header = try res.getHeader("Content-Type") orelse return;
+
+    try std.testing.expectEqualSlices(u8, "Content-Type", res_header.name);
+    try std.testing.expectEqualSlices(u8, "text/plain", res_header.getValue());
 }
 
 test "swap and wrap" {
     try testServer.ensureRunning();
 
     try @import("root.zig").global.init(.all);
-    @import("root.zig").global.deinit();
+    defer @import("root.zig").global.deinit();
 
     var easy = try Self.init(.{});
     defer easy.deinit();
@@ -288,7 +413,7 @@ test "setCallback" {
     try testServer.ensureRunning();
 
     try @import("root.zig").global.init(.all);
-    @import("root.zig").global.deinit();
+    defer @import("root.zig").global.deinit();
 
     var easy = try Self.init(.{});
     defer easy.deinit();
