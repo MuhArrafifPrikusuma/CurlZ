@@ -1,22 +1,22 @@
 const std = @import("std");
 const c = @import("curl.zig");
-const ziglings = @import("ziglings.zig");
+const testServer = @import("testServer");
+
 const util = @import("util.zig");
 const errors = @import("errors.zig");
-
-const testServer = @import("testServer");
+const ziglings = @import("ziglings.zig");
 
 const Diagnostic = @import("Diagnostics.zig");
 
 const Headers = @import("root.zig").Headers;
 const InfoType = @import("root.zig").InfoType;
+const Curl = @import("root.zig").Curl;
+const Socket = @import("root.zig").Socket;
 
 const Self = @This();
 
-const Socket = c_int;
-
 /// pointer to curl easy
-handle: *c.CURL,
+handle: *Curl,
 timeout_ms: usize,
 user_agent: [:0]const u8,
 diagnostic: Diagnostic,
@@ -45,10 +45,10 @@ pub const FetchOptions = struct {
 };
 
 pub const Response = struct {
-    status_code: u32,
-    handle: *c.CURL,
+    status_code: u32, // NOTE: later add status enum and status class
+    handle: *Curl,
 
-    fn PolyFillCurlHeader() type {
+    fn PolyFill_curl_header() type {
         if (comptime util.hasHeaderSupport()) {
             return c.struct_curl_header;
         } else return struct {
@@ -57,7 +57,7 @@ pub const Response = struct {
     }
 
     pub const Header = struct {
-        header: *PolyFillCurlHeader(),
+        header: *PolyFill_curl_header(),
         name: []const u8,
 
         /// get the header value as slice
@@ -80,7 +80,7 @@ pub const Response = struct {
     }
 
     fn getHeaderInner(
-        easy: *c.CURL,
+        easy: *Curl,
         name: [:0]const u8,
         request: c_int,
         hout: *?*c.struct_curl_header,
@@ -105,15 +105,15 @@ pub const Response = struct {
 
     /// for iterating over response header if there is a redirect
     pub const HeaderIterator = struct {
-        handle: *c.CURL,
+        handle: *Curl,
         name: ?[:0]const u8,
         request: ?usize = null, // if null use -1 (last)
-        header: ?*PolyFillCurlHeader() = null,
+        header: ?*PolyFill_curl_header() = null,
 
         pub fn next(self: *HeaderIterator) !?Header {
             util.expectHeaderSupport(@src());
 
-            const request: c_int = if (self.request) |v| @intCast(v) else -1;
+            const request: c_int = @intCast(self.request orelse -1);
 
             if (self.name) |filter_name| {
                 if (self.header) |h| {
@@ -178,21 +178,93 @@ pub const Info = enum(c_int) {
     private = c.CURLINFO_PRIVATE,
     response_code = c.CURLINFO_RESPONSE_CODE,
 
-    fn ArgType(self: Info) type {
+    fn ParamType(self: Info) type {
         return switch (self) {
             .active_socket => *Socket,
-            .private => *anyopaque,
+            .private => ?*anyopaque,
             .response_code => *c_long,
         };
     }
 };
 
-/// Init options for easy handle
 pub const Options = struct {
     /// default 60 second
     default_timeout_ms: usize = 60_000,
     /// NOTE: add version number later
     default_user_agent: [:0]const u8 = "CurlZ/" ++ @import("build_info").version,
+};
+
+pub const Pause = enum(c_int) {
+    recv = c.CURLPAUSE_RECV,
+    send = c.CURLPAUSE_SEND,
+    all = c.CURLPAUSE_ALL,
+    cont_all = c.CURLPAUSE_CONT,
+    cont_recv = c.CURLPAUSE_RECV_CONT,
+    cont_send = c.CURLPAUSE_SEND_CONT,
+};
+
+pub const Callback = enum(c_int) {
+    write = c.CURLOPT_WRITEFUNCTION,
+    read = c.CURLOPT_READFUNCTION,
+    header = c.CURLOPT_HEADERFUNCTION,
+    sockopt = c.CURLOPT_SOCKOPTFUNCTION,
+
+    open_socket = c.CURLOPT_OPENSOCKETFUNCTION,
+    close_socket = c.CURLOPT_CLOSESOCKETFUNCTION,
+
+    debug = c.CURLOPT_DEBUGFUNCTION,
+
+    pub fn signature(self: Callback) struct {
+        callback_func: type,
+        data: c_int,
+    } {
+        return switch (self) {
+            .write => .{
+                .callback_func = *const fn ([*:0]const u8, usize, usize, clientp: ?*anyopaque) callconv(.c) usize,
+                .data = c.CURLOPT_WRITEDATA,
+            },
+            .read => .{
+                .callback_func = *const fn ([*:0]u8, usize, usize, clientp: ?*anyopaque) callconv(.c) usize,
+                .data = c.CURLOPT_READDATA,
+            },
+            .header => .{
+                .callback_func = *const fn ([*:0]u8, usize, usize, clientp: ?*anyopaque) callconv(.c) usize,
+                .data = c.CURLOPT_HEADERDATA,
+            },
+            .close_socket => .{
+                .callback_func = *const fn (?*anyopaque, c.curl_socket_t) callconv(.c) c_int,
+                .data = c.CURLOPT_CLOSESOCKETDATA,
+            },
+            .debug => .{
+                .callback_func = *const fn (*Curl, InfoType, [*:0]u8, usize, clientp: ?*anyopaque) callconv(.c) c_int,
+                .data = c.CURLOPT_DEBUGDATA,
+            },
+            .open_socket => .{
+                .callback_func = *const fn (clientp: ?*anyopaque, c.curlsocktype, ?*c.struct_curl_sockaddr) callconv(.c) Socket,
+                .data = c.CURLOPT_OPENSOCKETDATA,
+            },
+            .sockopt => .{
+                .callback_func = *const fn (clientp: ?*anyopaque, curlfd: Socket, purpose: c.curlsocktype) callconv(.c) c_int,
+                .data = c.CURLOPT_SOCKOPTDATA,
+            },
+        };
+    }
+};
+
+pub const Follow = enum(c_int) {
+    all = c.CURLFOLLOW_ALL,
+    first_only = c.CURLFOLLOW_FIRSTONLY,
+    obeycode = c.CURLFOLLOW_OBEYCODE,
+};
+
+pub const HttpVersions = enum(c_long) {
+    @"1.0" = c.CURL_HTTP_VERSION_1_0,
+    @"1.1" = c.CURL_HTTP_VERSION_1_1,
+    @"2.0" = c.CURL_HTTP_VERSION_2,
+    @"2tls" = c.CURL_HTTP_VERSION_2TLS,
+    @"2_prior_knowledge" = c.CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE,
+    @"3" = c.CURL_HTTP_VERSION_3,
+    @"3Only" = c.CURL_HTTP_VERSION_3ONLY,
 };
 
 /// initiate easy interface
@@ -213,10 +285,6 @@ pub inline fn setUrl(self: *Self, url: [:0]const u8) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
 }
 
-// pub inline fn setRedirect(self: *Self) !void {
-//     c.curl_easy_setopt(self.handle, c.CURLOPT_FOLLOWLOCATION, )
-// }
-
 pub inline fn setMethod(self: *Self, method: Method) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, method.toString().ptr));
 }
@@ -226,47 +294,62 @@ pub inline fn setPostField(self: *Self, body: []const u8) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, body.len));
 }
 
-pub inline fn dupHandle(self: *Self) !*c.CURL {
-    return c.curl_easy_duphandle(self.handle) orelse error.CurlInit;
+pub inline fn setPostFieldLarge(self: *Self, body: []const u8) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDS, body.ptr));
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE_LARGE, @as(c.curl_off_t, @intCast(body.len))));
 }
 
-pub const Callback = enum(c_int) {
-    write = c.CURLOPT_WRITEFUNCTION,
-    read = c.CURLOPT_READFUNCTION,
-    header = c.CURLOPT_HEADERFUNCTION,
+pub inline fn setPrivate(self: *Self, ptr: *anyopaque) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_PRIVATE, ptr));
+}
 
-    close_socket = c.CURLOPT_CLOSESOCKETFUNCTION,
+pub inline fn setFollowLocation(self: *Self, mode: Follow) !void {
+    util.assertRuntimePanic(
+        "libcurl version \x1b[2m'{s}'\x1b[0m does not support \x1b[2m'{s}'\x1b[0m follow mode\n",
+        .{ c.LIBCURL_VERSION, @tagName(mode) },
+        @intFromEnum(mode) == c.CURLFOLLOW_ALL,
+    );
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_FOLLOWLOCATION, @as(c_long, @intCast(@intFromEnum(mode)))));
+}
 
-    debug = c.CURLOPT_DEBUGFUNCTION,
+pub inline fn setMaxRedirects(self: *Self, max: usize) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, @intCast(max))));
+}
 
-    pub fn signature(self: Callback) struct {
-        callback_func: type,
-        data: c_int,
-    } {
-        return switch (self) {
-            .write => .{
-                .callback_func = *const fn ([*:0]const u8, usize, usize, ?*anyopaque) callconv(.c) usize,
-                .data = c.CURLOPT_WRITEDATA,
-            },
-            .read => .{
-                .callback_func = *const fn ([*:0]u8, usize, usize, ?*anyopaque) callconv(.c) usize,
-                .data = c.CURLOPT_READDATA,
-            },
-            .header => .{
-                .callback_func = *const fn ([*:0]u8, usize, usize, ?*anyopaque) callconv(.c) usize,
-                .data = c.CURLOPT_HEADERDATA,
-            },
-            .close_socket => .{
-                .callback_func = *const fn (?*anyopaque, c.curl_socket_t) callconv(.c) c_int,
-                .data = c.CURLOPT_HEADERDATA,
-            },
-            .debug => .{
-                .callback_func = *const fn (*c.CURL, InfoType, [*:0]u8, usize, ?*anyopaque) callconv(.c) c_int,
-                .data = c.CURLOPT_DEBUGDATA,
-            },
-        };
-    }
-};
+pub inline fn setHeader(self: *Self, headers: Headers) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_HEADER, headers.list));
+}
+
+pub inline fn setKeepAlive(self: *Self) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_TCP_KEEPALIVE, @as(c_long, 1)));
+}
+
+/// keep alive interval
+pub inline fn setKeepAliveInvl(self: *Self, invl: usize) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_TCP_KEEPINTVL, @as(c_long, @intCast(invl))));
+}
+
+pub inline fn setKeepIdle(self: *Self, time_sec: usize) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_TCP_KEEPIDLE, @as(c_long, @intCast(time_sec))));
+}
+
+pub inline fn setHttpVer(self: *Self, http_ver: HttpVersions) !void {
+    util.hasHttpVersionSupport(http_ver);
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTP_VERSION, @intFromEnum(http_ver)));
+}
+
+/// memory is allocated by libcurl therefore use curl.free() to free it's memory
+pub inline fn escape(self: *Self, string: [:0]const u8) []const u8 {
+    return std.mem.span(c.curl_easy_escape(self.handle, string.ptr, string.len));
+}
+
+pub inline fn pause(self: *Self, action: Pause) !void {
+    try self.diagnostic.checkError(c.curl_easy_pause(self.handle, @intFromEnum(action)));
+}
+
+pub inline fn dupHandle(self: *Self) !*Curl {
+    return c.curl_easy_duphandle(self.handle) orelse error.CurlInit;
+}
 
 pub inline fn setCallback(
     self: *Self,
@@ -275,10 +358,10 @@ pub inline fn setCallback(
     data: ?*anyopaque,
 ) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, @intFromEnum(cb)), func));
-    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, cb.signature().data), data));
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, comptime cb.signature().data), data));
 }
 
-pub inline fn getInfo(self: *Self, comptime info: Info, arg: info.ArgType()) !void {
+pub inline fn getInfo(self: *Self, comptime info: Info, arg: info.ParamType()) !void {
     try self.diagnostic.checkError(c.curl_easy_getinfo(self.handle, @intFromEnum(info), arg));
 }
 
@@ -295,7 +378,7 @@ pub fn perform(self: *Self) !Response {
 }
 
 /// wrap an existing easy handle
-pub fn wrap(handle: *c.CURL, opt: Options) Self {
+pub fn wrap(handle: *Curl, opt: Options) Self {
     return Self{
         .handle = handle,
         .diagnostic = .{},
@@ -305,7 +388,7 @@ pub fn wrap(handle: *c.CURL, opt: Options) Self {
 }
 
 pub const Swap = union(enum) {
-    handle: *c.CURL,
+    handle: *Curl,
     opt: Options,
 };
 
@@ -334,9 +417,9 @@ pub fn fetch(self: *Self, url: [:0]const u8, opt: FetchOptions) !Response {
             try headers.?.add(header);
         }
     }
-    defer if (headers) |h| {
-        h.deinit();
-    };
+    const headers_non_null = headers orelse return try self.perform();
+    try self.setHeader(headers_non_null);
+    defer headers_non_null.deinit();
 
     return try self.perform();
 }
@@ -399,12 +482,16 @@ test "swap and wrap" {
     try std.testing.expect(easy.handle != pref);
 
     var wrap_easy = Self.wrap(pref, .{});
+    defer wrap_easy.deinit();
 
     try wrap_easy.setUrl(testServer.server_url);
     try wrap_easy.setMethod(.GET);
 
     _ = wrap_easy.perform() catch |err| {
-        std.testing.failPrint("{s}: {?s}\n", .{ testServer.server_url, wrap_easy.diagnostic.getMessage() });
+        std.testing.failPrint("{s}: {?s}\n", .{
+            testServer.server_url,
+            wrap_easy.diagnostic.getMessage(),
+        });
         return err;
     };
 }
