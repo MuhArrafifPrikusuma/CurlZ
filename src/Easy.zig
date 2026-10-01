@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c");
+const c = @import("curl.zig");
 const testServer = @import("testServer");
 
 const util = @import("util.zig");
@@ -187,7 +187,6 @@ pub const Info = enum(c_int) {
     }
 };
 
-/// Init options for easy handle
 pub const Options = struct {
     /// default 60 second
     default_timeout_ms: usize = 60_000,
@@ -202,6 +201,70 @@ pub const Pause = enum(c_int) {
     cont_all = c.CURLPAUSE_CONT,
     cont_recv = c.CURLPAUSE_RECV_CONT,
     cont_send = c.CURLPAUSE_SEND_CONT,
+};
+
+pub const Callback = enum(c_int) {
+    write = c.CURLOPT_WRITEFUNCTION,
+    read = c.CURLOPT_READFUNCTION,
+    header = c.CURLOPT_HEADERFUNCTION,
+    sockopt = c.CURLOPT_SOCKOPTFUNCTION,
+
+    open_socket = c.CURLOPT_OPENSOCKETFUNCTION,
+    close_socket = c.CURLOPT_CLOSESOCKETFUNCTION,
+
+    debug = c.CURLOPT_DEBUGFUNCTION,
+
+    pub fn signature(self: Callback) struct {
+        callback_func: type,
+        data: c_int,
+    } {
+        return switch (self) {
+            .write => .{
+                .callback_func = *const fn ([*:0]const u8, usize, usize, clientp: ?*anyopaque) callconv(.c) usize,
+                .data = c.CURLOPT_WRITEDATA,
+            },
+            .read => .{
+                .callback_func = *const fn ([*:0]u8, usize, usize, clientp: ?*anyopaque) callconv(.c) usize,
+                .data = c.CURLOPT_READDATA,
+            },
+            .header => .{
+                .callback_func = *const fn ([*:0]u8, usize, usize, clientp: ?*anyopaque) callconv(.c) usize,
+                .data = c.CURLOPT_HEADERDATA,
+            },
+            .close_socket => .{
+                .callback_func = *const fn (?*anyopaque, c.curl_socket_t) callconv(.c) c_int,
+                .data = c.CURLOPT_CLOSESOCKETDATA,
+            },
+            .debug => .{
+                .callback_func = *const fn (*Curl, InfoType, [*:0]u8, usize, clientp: ?*anyopaque) callconv(.c) c_int,
+                .data = c.CURLOPT_DEBUGDATA,
+            },
+            .open_socket => .{
+                .callback_func = *const fn (clientp: ?*anyopaque, c.curlsocktype, ?*c.struct_curl_sockaddr) callconv(.c) Socket,
+                .data = c.CURLOPT_OPENSOCKETDATA,
+            },
+            .sockopt => .{
+                .callback_func = *const fn (clientp: ?*anyopaque, curlfd: Socket, purpose: c.curlsocktype) callconv(.c) c_int,
+                .data = c.CURLOPT_SOCKOPTDATA,
+            },
+        };
+    }
+};
+
+pub const Follow = enum(c_int) {
+    all = c.CURLFOLLOW_ALL,
+    first_only = c.CURLFOLLOW_FIRSTONLY,
+    obeycode = c.CURLFOLLOW_OBEYCODE,
+};
+
+pub const HttpVersions = enum(c_long) {
+    @"1.0" = c.CURL_HTTP_VERSION_1_0,
+    @"1.1" = c.CURL_HTTP_VERSION_1_1,
+    @"2.0" = c.CURL_HTTP_VERSION_2,
+    @"2tls" = c.CURL_HTTP_VERSION_2TLS,
+    @"2_prior_knowledge" = c.CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE,
+    @"3" = c.CURL_HTTP_VERSION_3,
+    @"3Only" = c.CURL_HTTP_VERSION_3ONLY,
 };
 
 /// initiate easy interface
@@ -222,19 +285,6 @@ pub inline fn setUrl(self: *Self, url: [:0]const u8) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
 }
 
-/// memory is allocated by libcurl therefore use curl.free() to free it's memory
-pub inline fn escape(self: *Self, string: [:0]const u8) []const u8 {
-    return std.mem.span(c.curl_easy_escape(self.handle, string.ptr, string.len));
-}
-
-pub inline fn pause(self: *Self, action: Pause) !void {
-    try self.diagnostic.checkError(c.curl_easy_pause(self.handle, @intFromEnum(action)));
-}
-
-// pub inline fn setRedirect(self: *Self) !void {
-//     c.curl_easy_setopt(self.handle, c.CURLOPT_FOLLOWLOCATION, )
-// }
-
 pub inline fn setMethod(self: *Self, method: Method) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, method.toString().ptr));
 }
@@ -244,47 +294,62 @@ pub inline fn setPostField(self: *Self, body: []const u8) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, body.len));
 }
 
+pub inline fn setPostFieldLarge(self: *Self, body: []const u8) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDS, body.ptr));
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE_LARGE, @as(c.curl_off_t, @intCast(body.len))));
+}
+
+pub inline fn setPrivate(self: *Self, ptr: *anyopaque) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_PRIVATE, ptr));
+}
+
+pub inline fn setFollowLocation(self: *Self, mode: Follow) !void {
+    util.assertRuntimePanic(
+        "libcurl version \x1b[2m'{s}'\x1b[0m does not support \x1b[2m'{s}'\x1b[0m follow mode\n",
+        .{ c.LIBCURL_VERSION, @tagName(mode) },
+        @intFromEnum(mode) == c.CURLFOLLOW_ALL,
+    );
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_FOLLOWLOCATION, @as(c_long, @intCast(@intFromEnum(mode)))));
+}
+
+pub inline fn setMaxRedirects(self: *Self, max: usize) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, @intCast(max))));
+}
+
+pub inline fn setHeader(self: *Self, headers: Headers) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_HEADER, headers.list));
+}
+
+pub inline fn setKeepAlive(self: *Self) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_TCP_KEEPALIVE, @as(c_long, 1)));
+}
+
+/// keep alive interval
+pub inline fn setKeepAliveInvl(self: *Self, invl: usize) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_TCP_KEEPINTVL, @as(c_long, @intCast(invl))));
+}
+
+pub inline fn setKeepIdle(self: *Self, time_sec: usize) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_TCP_KEEPIDLE, @as(c_long, @intCast(time_sec))));
+}
+
+pub inline fn setHttpVer(self: *Self, http_ver: HttpVersions) !void {
+    util.hasHttpVersionSupport(http_ver);
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTP_VERSION, @intFromEnum(http_ver)));
+}
+
+/// memory is allocated by libcurl therefore use curl.free() to free it's memory
+pub inline fn escape(self: *Self, string: [:0]const u8) []const u8 {
+    return std.mem.span(c.curl_easy_escape(self.handle, string.ptr, string.len));
+}
+
+pub inline fn pause(self: *Self, action: Pause) !void {
+    try self.diagnostic.checkError(c.curl_easy_pause(self.handle, @intFromEnum(action)));
+}
+
 pub inline fn dupHandle(self: *Self) !*Curl {
     return c.curl_easy_duphandle(self.handle) orelse error.CurlInit;
 }
-
-pub const Callback = enum(c_int) {
-    write = c.CURLOPT_WRITEFUNCTION,
-    read = c.CURLOPT_READFUNCTION,
-    header = c.CURLOPT_HEADERFUNCTION,
-
-    close_socket = c.CURLOPT_CLOSESOCKETFUNCTION,
-
-    debug = c.CURLOPT_DEBUGFUNCTION,
-
-    pub fn signature(self: Callback) struct {
-        callback_func: type,
-        data: c_int,
-    } {
-        return switch (self) {
-            .write => .{
-                .callback_func = *const fn ([*:0]const u8, usize, usize, ?*anyopaque) callconv(.c) usize,
-                .data = c.CURLOPT_WRITEDATA,
-            },
-            .read => .{
-                .callback_func = *const fn ([*:0]u8, usize, usize, ?*anyopaque) callconv(.c) usize,
-                .data = c.CURLOPT_READDATA,
-            },
-            .header => .{
-                .callback_func = *const fn ([*:0]u8, usize, usize, ?*anyopaque) callconv(.c) usize,
-                .data = c.CURLOPT_HEADERDATA,
-            },
-            .close_socket => .{
-                .callback_func = *const fn (?*anyopaque, c.curl_socket_t) callconv(.c) c_int,
-                .data = c.CURLOPT_CLOSESOCKETDATA,
-            },
-            .debug => .{
-                .callback_func = *const fn (*c.CURL, InfoType, [*:0]u8, usize, ?*anyopaque) callconv(.c) c_int,
-                .data = c.CURLOPT_DEBUGDATA,
-            },
-        };
-    }
-};
 
 pub inline fn setCallback(
     self: *Self,
@@ -293,7 +358,7 @@ pub inline fn setCallback(
     data: ?*anyopaque,
 ) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, @intFromEnum(cb)), func));
-    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, cb.signature().data), data));
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, comptime cb.signature().data), data));
 }
 
 pub inline fn getInfo(self: *Self, comptime info: Info, arg: info.ParamType()) !void {
@@ -352,9 +417,9 @@ pub fn fetch(self: *Self, url: [:0]const u8, opt: FetchOptions) !Response {
             try headers.?.add(header);
         }
     }
-    defer if (headers) |h| {
-        h.deinit();
-    };
+    const headers_non_null = headers orelse return try self.perform();
+    try self.setHeader(headers_non_null);
+    defer headers_non_null.deinit();
 
     return try self.perform();
 }

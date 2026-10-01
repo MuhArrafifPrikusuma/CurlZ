@@ -166,18 +166,16 @@ pub fn wrap(mhandle: *CurlM) Self {
 
 /// read info from easy handler and return Info, easy_handle from Info.msg.easy_handle can be wrapped
 /// using Easy.wrap
-pub fn readInfo(self: *Self) !Info {
+pub fn readInfo(self: *Self) ?Info {
     var msg_in_queue: u32 = 0;
-    const msgData: ?*c.struct_CURLMsg = c.curl_multi_info_read(self.mhandle, @ptrCast(&msg_in_queue));
+    const msgData: ?*CurlMsg = @ptrCast(c.curl_multi_info_read(self.mhandle, @as(*c_int, @ptrCast(&msg_in_queue))));
 
-    if (msgData == null) {
-        return error.FailedtoReadInfo;
-    }
-
-    return Info{
-        .msg_in_queue = msg_in_queue,
-        .msg = msgData.?,
-    };
+    if (msgData) |data| {
+        return Info{
+            .msg_in_queue = msg_in_queue,
+            .msg = data,
+        };
+    } else return null;
 }
 
 /// return the number of file descriptors polled
@@ -209,6 +207,14 @@ test "poll" {
 
     var multi = try Self.init();
     const easys: [100]Easy = undefined;
+    defer {
+        multi.deinit();
+        for (&easys) |*easy| {
+            var mut_easy: *Easy = @constCast(easy);
+            mut_easy.deinit();
+        }
+    }
+
     for (&easys) |*easy| {
         var mut_easy: *Easy = @constCast(easy);
         mut_easy.* = try .init(.{});
@@ -216,33 +222,39 @@ test "poll" {
         try mut_easy.setMethod(.GET);
 
         multi.addHandle(mut_easy) catch |err| {
-            std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
+            std.testing.failPrint("error addHandle: {?s}\n", .{multi.diagnostic.getMessage()});
             return err;
         };
     }
 
     while (true) {
         const running_handles = multi.perform() catch |err| {
-            std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
+            std.testing.failPrint("error perform: {?s}\n", .{multi.diagnostic.getMessage()});
             return err;
         };
 
-        const info = multi.readInfo() catch |err| {
-            std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
-            return err;
-        };
+        while (true) {
+            const info = multi.readInfo() orelse break;
 
-        var easy = Easy.wrap(info.msg.easy_handle.?, .{});
-        var status_code: c_long = 0;
-        try easy.getInfo(.response_code, &status_code);
-        std.debug.print("see return code: {d}\n", .{status_code});
+            if (info.msg.easy_handle) |handle| {
+                try multi.removeHandle(.{ .handle = handle });
+
+                var easy = Easy.wrap(info.msg.easy_handle.?, .{});
+                defer easy.deinit();
+
+                var status_code: c_long = 0;
+                try easy.getInfo(.response_code, &status_code);
+                try std.testing.expect(status_code == 200);
+            }
+
+            const active_fds = multi.poll(null, 1000) catch |err| {
+                std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
+                return err;
+            };
+
+            std.debug.print("current active fds: {d}\n", .{active_fds});
+        }
 
         if (running_handles <= 0) break;
-
-        const active_fds = multi.poll(null, 1000) catch |err| {
-            std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
-            return err;
-        };
-        _ = active_fds;
     }
 }
