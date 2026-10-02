@@ -24,3 +24,6 @@ jobs:
 
       - name: build test bin
         run: zig build test --summary all
+
+      - name: build test on ReleaseFast
+        run: zig build -Doptimize=ReleaseFast test --summary all

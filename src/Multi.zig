@@ -5,11 +5,12 @@ const testServer = @import("testServer");
 
 const util = @import("util.zig");
 const ziglings = @import("ziglings.zig");
+const http = @import("http.zig");
 
 const Easy = @import("Easy.zig");
 const Diagnostic = @import("Diagnostics.zig");
 
-const CurlMsg = @import("root.zig").CurlMsg;
+const Msg = @import("root.zig").Msg;
 const CurlM = @import("root.zig").CurlM;
 const Curl = @import("root.zig").Curl;
 const Socket = @import("root.zig").Socket;
@@ -40,7 +41,7 @@ pub const HandleOrWrapper = union(enum) {
 
 pub const Info = struct {
     msg_in_queue: u32,
-    msg: *CurlMsg,
+    msg: *Msg,
 };
 
 pub const Notification = enum(c_uint) {
@@ -168,7 +169,7 @@ pub fn wrap(mhandle: *CurlM) Self {
 /// using Easy.wrap
 pub fn readInfo(self: *Self) ?Info {
     var msg_in_queue: u32 = 0;
-    const msgData: ?*CurlMsg = @ptrCast(c.curl_multi_info_read(self.mhandle, @as(*c_int, @ptrCast(&msg_in_queue))));
+    const msgData: ?*Msg = @ptrCast(c.curl_multi_info_read(self.mhandle, @as(*c_int, @ptrCast(&msg_in_queue))));
 
     if (msgData) |data| {
         return Info{
@@ -206,22 +207,25 @@ test "poll" {
     defer @import("root.zig").global.deinit();
 
     var multi = try Self.init();
-    const easys: [100]Easy = undefined;
+    const allocator = std.testing.allocator;
+
+    const count: usize = 1000;
+    var easy_list: std.ArrayList(Easy) = try .initCapacity(allocator, count);
+    defer easy_list.deinit(allocator);
+
     defer {
         multi.deinit();
-        for (&easys) |*easy| {
-            var mut_easy: *Easy = @constCast(easy);
-            mut_easy.deinit();
+        for (easy_list.items) |*easy| {
+            easy.deinit();
         }
     }
 
-    for (&easys) |*easy| {
-        var mut_easy: *Easy = @constCast(easy);
-        mut_easy.* = try .init(.{});
-        try mut_easy.setUrl(testServer.server_url);
-        try mut_easy.setMethod(.GET);
+    for (easy_list.items) |*easy| {
+        easy.* = try .init(.{});
+        try easy.setUrl(testServer.server_url);
+        try easy.setMethod(.GET);
 
-        multi.addHandle(mut_easy) catch |err| {
+        multi.addHandle(easy) catch |err| {
             std.testing.failPrint("error addHandle: {?s}\n", .{multi.diagnostic.getMessage()});
             return err;
         };
@@ -239,20 +243,22 @@ test "poll" {
             if (info.msg.easy_handle) |handle| {
                 try multi.removeHandle(.{ .handle = handle });
 
-                var easy = Easy.wrap(info.msg.easy_handle.?, .{});
+                var easy = Easy.wrap(handle, .{});
                 defer easy.deinit();
 
-                var status_code: c_long = 0;
-                try easy.getInfo(.response_code, &status_code);
-                try std.testing.expect(status_code == 200);
+                const status_code: http.Status = try easy.getInfo(.response_code);
+                std.testing.expect(status_code == .ok) catch |err| {
+                    std.testing.failPrint("status: {d}\n", .{status_code});
+                    return err;
+                };
+                std.debug.print("status: {any}\n", .{status_code});
             }
 
-            const active_fds = multi.poll(null, 1000) catch |err| {
+            const active_fds = multi.poll(null, 10) catch |err| {
                 std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
                 return err;
             };
-
-            std.debug.print("current active fds: {d}\n", .{active_fds});
+            _ = active_fds;
         }
 
         if (running_handles <= 0) break;
