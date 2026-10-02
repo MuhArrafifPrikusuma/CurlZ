@@ -1,18 +1,24 @@
 const std = @import("std");
 const root = @import("root");
-const c = @import("curl.zig");
+const c = @import("c");
+
+pub const global = @import("global.zig");
+pub const http = @import("http.zig");
 
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
+pub const MultiPart = @import("MultiPart.zig");
 pub const Diagnostic = @import("Diagnostics.zig");
-pub const global = @import("global.zig");
 
-pub const CurlMsg = c.struct_CURLMsg;
+pub const Msg = c.struct_CURLMsg;
 pub const InfoType = c.curl_infotype;
 pub const Curl = c.CURL;
 pub const CurlM = c.CURLM;
 pub const Socket = c.curl_socket_t;
+pub const Mime = c.curl_mime;
 
+/// this is just standard library std.http.Status but with c_long as it's backing integer
+/// to satisfy libcurl allignment
 const util = @import("util.zig");
 
 pub const Headers = struct {

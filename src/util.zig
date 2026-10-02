@@ -1,8 +1,8 @@
 const std = @import("std");
-const c = @import("curl.zig");
+const c = @import("c");
 const builtin = @import("builtin");
 
-const HttpVersions = @import("Easy.zig").HttpVersions;
+const http = @import("http.zig");
 
 comptime {
     if (!@hasDecl(c, "CURL_AT_LEAST_VERSION"))
@@ -50,17 +50,17 @@ pub fn assertRuntimePanic(comptime fmt: []const u8, args: anytype, ok: bool) voi
     }
 }
 
-pub fn hasHttpVersionSupport(ver: HttpVersions) void {
+pub fn runtimeEnsureHttpVersionSupport(ver: http.Versions) void {
     if (builtin.mode == .debug or builtin.mode == .safe) {
         const @"panic?" = switch (ver) {
-            .@"3Only" => c.CURL_AT_LEAST_VERSION(7, 88, 0),
+            .@"3 only" => c.CURL_AT_LEAST_VERSION(7, 88, 0),
             .@"3" => c.CURL_AT_LEAST_VERSION(7, 66, 0),
-            .@"2_prior_knowledge" => c.CURL_AT_LEAST_VERSION(8, 10, 0),
+            .@"2 prior knowledge" => c.CURL_AT_LEAST_VERSION(8, 10, 0),
             else => return,
         };
         assertRuntimePanic(
             "libcurl version \x1b[2m'{s}'\x1b[0m does not support http version \x1b[2m'{s}'\x1b[0m",
-            .{c.LIBCURL_VERSION},
+            .{ c.LIBCURL_VERSION, @tagName(ver) },
             @"panic?",
         );
     } else return;

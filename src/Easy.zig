@@ -1,10 +1,11 @@
 const std = @import("std");
-const c = @import("curl.zig");
+const c = @import("c");
 const testServer = @import("testServer");
 
 const util = @import("util.zig");
 const errors = @import("errors.zig");
 const ziglings = @import("ziglings.zig");
+const http = @import("http.zig");
 
 const Diagnostic = @import("Diagnostics.zig");
 
@@ -45,7 +46,7 @@ pub const FetchOptions = struct {
 };
 
 pub const Response = struct {
-    status_code: u32, // NOTE: later add status enum and status class
+    status_code: http.Status, // NOTE: later add status enum and status class
     handle: *Curl,
 
     fn PolyFill_curl_header() type {
@@ -177,12 +178,21 @@ pub const Info = enum(c_int) {
     active_socket = c.CURLINFO_ACTIVESOCKET,
     private = c.CURLINFO_PRIVATE,
     response_code = c.CURLINFO_RESPONSE_CODE,
+    http_version = c.CURLINFO_HTTP_VERSION,
 
-    fn ParamType(self: Info) type {
+    fn ReturnType(self: Info) type {
         return switch (self) {
-            .active_socket => *Socket,
+            .active_socket => Socket,
             .private => ?*anyopaque,
-            .response_code => *c_long,
+            .response_code => http.Status,
+            .http_version => http.Versions,
+        };
+    }
+
+    fn resolveDefaultValue(self: Info) self.ReturnType() {
+        return switch (self.ReturnType()) {
+            ?*anyopaque => null,
+            else => undefined,
         };
     }
 };
@@ -190,7 +200,6 @@ pub const Info = enum(c_int) {
 pub const Options = struct {
     /// default 60 second
     default_timeout_ms: usize = 60_000,
-    /// NOTE: add version number later
     default_user_agent: [:0]const u8 = "CurlZ/" ++ @import("build_info").version,
 };
 
@@ -220,32 +229,32 @@ pub const Callback = enum(c_int) {
     } {
         return switch (self) {
             .write => .{
-                .callback_func = *const fn ([*:0]const u8, usize, usize, clientp: ?*anyopaque) callconv(.c) usize,
+                .callback_func = *const fn (ptr: [*:0]const u8, size: usize, nmemb: usize, userdata: ?*anyopaque) callconv(.c) usize,
                 .data = c.CURLOPT_WRITEDATA,
             },
             .read => .{
-                .callback_func = *const fn ([*:0]u8, usize, usize, clientp: ?*anyopaque) callconv(.c) usize,
+                .callback_func = *const fn (buffer: [*:0]u8, size: usize, nitems: usize, userdata: ?*anyopaque) callconv(.c) usize,
                 .data = c.CURLOPT_READDATA,
             },
             .header => .{
-                .callback_func = *const fn ([*:0]u8, usize, usize, clientp: ?*anyopaque) callconv(.c) usize,
+                .callback_func = *const fn (buffer: [*:0]u8, size: usize, nitems: usize, clientp: ?*anyopaque) callconv(.c) usize,
                 .data = c.CURLOPT_HEADERDATA,
             },
-            .close_socket => .{
-                .callback_func = *const fn (?*anyopaque, c.curl_socket_t) callconv(.c) c_int,
-                .data = c.CURLOPT_CLOSESOCKETDATA,
-            },
-            .debug => .{
-                .callback_func = *const fn (*Curl, InfoType, [*:0]u8, usize, clientp: ?*anyopaque) callconv(.c) c_int,
-                .data = c.CURLOPT_DEBUGDATA,
-            },
             .open_socket => .{
-                .callback_func = *const fn (clientp: ?*anyopaque, c.curlsocktype, ?*c.struct_curl_sockaddr) callconv(.c) Socket,
+                .callback_func = *const fn (clientp: ?*anyopaque, purpose: c.curlsocktype, address: ?*c.struct_curl_sockaddr) callconv(.c) Socket,
                 .data = c.CURLOPT_OPENSOCKETDATA,
+            },
+            .close_socket => .{
+                .callback_func = *const fn (clientp: ?*anyopaque, items: c.curl_socket_t) callconv(.c) c_int,
+                .data = c.CURLOPT_CLOSESOCKETDATA,
             },
             .sockopt => .{
                 .callback_func = *const fn (clientp: ?*anyopaque, curlfd: Socket, purpose: c.curlsocktype) callconv(.c) c_int,
                 .data = c.CURLOPT_SOCKOPTDATA,
+            },
+            .debug => .{
+                .callback_func = *const fn (*Curl, InfoType, [*:0]u8, usize, clientp: ?*anyopaque) callconv(.c) c_int,
+                .data = c.CURLOPT_DEBUGDATA,
             },
         };
     }
@@ -255,16 +264,6 @@ pub const Follow = enum(c_int) {
     all = c.CURLFOLLOW_ALL,
     first_only = c.CURLFOLLOW_FIRSTONLY,
     obeycode = c.CURLFOLLOW_OBEYCODE,
-};
-
-pub const HttpVersions = enum(c_long) {
-    @"1.0" = c.CURL_HTTP_VERSION_1_0,
-    @"1.1" = c.CURL_HTTP_VERSION_1_1,
-    @"2.0" = c.CURL_HTTP_VERSION_2,
-    @"2tls" = c.CURL_HTTP_VERSION_2TLS,
-    @"2_prior_knowledge" = c.CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE,
-    @"3" = c.CURL_HTTP_VERSION_3,
-    @"3Only" = c.CURL_HTTP_VERSION_3ONLY,
 };
 
 /// initiate easy interface
@@ -312,8 +311,12 @@ pub inline fn setFollowLocation(self: *Self, mode: Follow) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_FOLLOWLOCATION, @as(c_long, @intCast(@intFromEnum(mode)))));
 }
 
-pub inline fn setMaxRedirects(self: *Self, max: usize) !void {
+pub inline fn setMaxRedirects(self: *Self, max: u32) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, @intCast(max))));
+}
+
+pub inline fn setVerbose(self: *Self, verbose: bool) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, @as(c_long, @intFromBool(verbose))));
 }
 
 pub inline fn setHeader(self: *Self, headers: Headers) !void {
@@ -333,8 +336,8 @@ pub inline fn setKeepIdle(self: *Self, time_sec: usize) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_TCP_KEEPIDLE, @as(c_long, @intCast(time_sec))));
 }
 
-pub inline fn setHttpVer(self: *Self, http_ver: HttpVersions) !void {
-    util.hasHttpVersionSupport(http_ver);
+pub inline fn setHttpVer(self: *Self, http_ver: http.Versions) !void {
+    util.runtimeEnsureHttpVersionSupport(http_ver);
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTP_VERSION, @intFromEnum(http_ver)));
 }
 
@@ -361,19 +364,27 @@ pub inline fn setCallback(
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, comptime cb.signature().data), data));
 }
 
-pub inline fn getInfo(self: *Self, comptime info: Info, arg: info.ParamType()) !void {
-    try self.diagnostic.checkError(c.curl_easy_getinfo(self.handle, @intFromEnum(info), arg));
+pub inline fn getInfo(self: *Self, comptime info: Info) !info.ReturnType() {
+    var arg: info.ReturnType() = comptime info.resolveDefaultValue();
+    switch (info) {
+        inline .active_socket, .private => {
+            try self.diagnostic.checkError(c.curl_easy_getinfo(self.handle, @intFromEnum(info), &arg));
+        },
+        inline .response_code, .http_version => {
+            try self.diagnostic.checkError(c.curl_easy_getinfo(self.handle, @intFromEnum(info), @as(*c_long, @ptrCast(&arg))));
+        },
+    }
+    return arg;
 }
 
 pub fn perform(self: *Self) !Response {
     try self.setCommonOpt();
     try self.diagnostic.checkError(c.curl_easy_perform(self.handle));
 
-    var status_code: c_long = 0;
-    try self.getInfo(.response_code, &status_code);
+    const status_code = try self.getInfo(.response_code);
     return Response{
         .handle = self.handle,
-        .status_code = @intCast(status_code),
+        .status_code = status_code,
     };
 }
 
@@ -496,7 +507,7 @@ test "swap and wrap" {
     };
 }
 
-test "setCallback" {
+test "setCallback and http ver" {
     try testServer.ensureRunning();
 
     try @import("root.zig").global.init(.all);
@@ -505,8 +516,45 @@ test "setCallback" {
     var easy = try Self.init(.{});
     defer easy.deinit();
 
+    try easy.setHttpVer(.@"1.1");
+    try easy.setUrl(testServer.server_url);
+
     easy.setCallback(.write, discard_write_callback, null) catch |err| {
         std.testing.failPrint("{?s}\n", .{easy.diagnostic.getMessage()});
         return err;
     };
+    const res = easy.perform() catch |err| {
+        std.testing.failPrint("{?s}\n", .{easy.diagnostic.getMessage()});
+        return err;
+    };
+
+    const ver = try easy.getInfo(.http_version);
+    try std.testing.expect(res.status_code == .ok);
+    try std.testing.expect(ver == .@"1.1");
+}
+
+test "setPrivate" {
+    try @import("root.zig").global.init(.all);
+    defer @import("root.zig").global.deinit();
+
+    var easy = try Self.init(.{});
+    defer easy.deinit();
+
+    const PrivateData = struct { datstr: []const u8, randomNumber: i32 };
+    const priv = PrivateData{
+        .datstr = "Hwellow",
+        .randomNumber = 22,
+    };
+    try easy.setUrl(testServer.server_url);
+    try easy.setPrivate(@ptrCast(@constCast(&priv)));
+
+    const res = easy.perform() catch |err| {
+        std.testing.failPrint("{?s}\n", .{easy.diagnostic.getMessage()});
+        return err;
+    };
+    try std.testing.expect(res.status_code == .ok);
+
+    const get_priv: *PrivateData = @ptrCast(@alignCast(try easy.getInfo(.private)));
+    try std.testing.expectEqualSlices(u8, "Hwellow", get_priv.datstr);
+    try std.testing.expect(get_priv.randomNumber == 22);
 }
