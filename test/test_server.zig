@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const MockServerState = enum(u8) {
     idle,
@@ -10,12 +11,12 @@ pub var server_runner_sync = std.atomic.Value(MockServerState).init(.idle);
 pub var server_ready = std.atomic.Value(bool).init(false);
 pub var server_url: [:0]const u8 = undefined;
 
-pub fn ensureRunning() !void {
+pub fn ensureRunning(param: if (!builtin.is_test) std.Io else void) !void {
     const state = server_runner_sync.load(.acquire);
-    const io = std.testing.io;
+    const io = if (builtin.is_test) std.testing.io else param;
 
     if (state == .idle) {
-        _ = try std.Thread.spawn(.{}, run, .{});
+        _ = try std.Thread.spawn(.{}, run, .{io});
         _ = server_runner_sync.swap(.running, .acq_rel);
     }
 
@@ -30,8 +31,7 @@ fn formatUrl(url: []const u8, port: u16) ![:0]const u8 {
 }
 
 /// return IpAddress to connect to by the client
-fn run() !void {
-    const io = std.testing.io;
+fn run(io: std.Io) !void {
     const url: []const u8 = "127.0.0.1";
     const addr = try std.Io.net.IpAddress.parse(url, 0);
 

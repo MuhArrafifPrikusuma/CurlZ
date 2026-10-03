@@ -38,7 +38,7 @@ pub const Method = enum {
 pub const FetchOptions = struct {
     method: Method = .GET,
     body: ?[]const u8 = null,
-    /// used to store headers data in here before user call fetch to then pass this headers
+    /// used to store headers data in here before user call fetch to then add this headers
     /// arrays to Headers type
     headers: ?[][:0]const u8 = null,
     /// for writing response body
@@ -302,6 +302,10 @@ pub inline fn setPrivate(self: *Self, ptr: *anyopaque) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_PRIVATE, ptr));
 }
 
+pub inline fn setEncoding(self: *Self, encoding: [:0]const u8) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_ACCEPT_ENCODING, encoding.ptr));
+}
+
 pub inline fn setFollowLocation(self: *Self, mode: Follow) !void {
     util.assertRuntimePanic(
         "libcurl version \x1b[2m'{s}'\x1b[0m does not support \x1b[2m'{s}'\x1b[0m follow mode\n",
@@ -316,7 +320,7 @@ pub inline fn setMaxRedirects(self: *Self, max: u32) !void {
 }
 
 pub inline fn setVerbose(self: *Self, verbose: bool) !void {
-    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, @as(c_long, @intFromBool(verbose))));
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, @as(c_long, 0) ^ @intFromBool(verbose)));
 }
 
 pub inline fn setHeader(self: *Self, headers: Headers) !void {
@@ -455,7 +459,7 @@ pub inline fn setCommonOpt(self: *Self) !void {
 }
 
 test "fetch and response" {
-    try testServer.ensureRunning();
+    try testServer.ensureRunning({});
 
     try @import("root.zig").global.init(.all);
     defer @import("root.zig").global.deinit();
@@ -475,7 +479,7 @@ test "fetch and response" {
 }
 
 test "swap and wrap" {
-    try testServer.ensureRunning();
+    try testServer.ensureRunning({});
 
     try @import("root.zig").global.init(.all);
     defer @import("root.zig").global.deinit();
@@ -508,7 +512,7 @@ test "swap and wrap" {
 }
 
 test "setCallback and http ver" {
-    try testServer.ensureRunning();
+    try testServer.ensureRunning({});
 
     try @import("root.zig").global.init(.all);
     defer @import("root.zig").global.deinit();
@@ -534,6 +538,8 @@ test "setCallback and http ver" {
 }
 
 test "setPrivate" {
+    try testServer.ensureRunning({});
+
     try @import("root.zig").global.init(.all);
     defer @import("root.zig").global.deinit();
 
