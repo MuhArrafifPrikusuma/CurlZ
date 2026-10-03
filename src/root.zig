@@ -1,6 +1,6 @@
 const std = @import("std");
 const root = @import("root");
-const c = @import("c");
+const c = @import("curl.zig");
 
 pub const global = @import("global.zig");
 pub const http = @import("http.zig");
@@ -10,7 +10,17 @@ pub const Multi = @import("Multi.zig");
 pub const MultiPart = @import("MultiPart.zig");
 pub const Diagnostic = @import("Diagnostics.zig");
 
-pub const Msg = c.struct_CURLMsg;
+const MsgDataUnion = extern union {
+    whatever: ?*anyopaque,
+    result: c.CURLcode,
+};
+
+pub const Msg = extern struct {
+    msg: c.CURLMSG = @import("std").mem.zeroes(c.CURLMSG),
+    easy_handle: ?*Curl = null,
+    data: MsgDataUnion = @import("std").mem.zeroes(MsgDataUnion),
+};
+
 pub const InfoType = c.curl_infotype;
 pub const Curl = c.CURL;
 pub const CurlM = c.CURLM;

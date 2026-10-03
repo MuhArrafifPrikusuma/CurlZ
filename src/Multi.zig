@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const c = @import("c");
+const c = @import("curl.zig");
 const testServer = @import("testServer");
 
 const util = @import("util.zig");
@@ -201,31 +201,22 @@ pub fn poll(self: *Self, extra_fds: ?[]WaitFd, timeout_ms: u32) !u32 {
 }
 
 test "poll" {
-    try testServer.ensureRunning();
+    try testServer.ensureRunning({});
 
     try @import("root.zig").global.init(.all);
     defer @import("root.zig").global.deinit();
 
     var multi = try Self.init();
-    const allocator = std.testing.allocator;
+    defer multi.deinit();
 
-    const count: usize = 1000;
-    var easy_list: std.ArrayList(Easy) = try .initCapacity(allocator, count);
-    defer easy_list.deinit(allocator);
-
-    defer {
-        multi.deinit();
-        for (easy_list.items) |*easy| {
-            easy.deinit();
-        }
-    }
-
-    for (easy_list.items) |*easy| {
-        easy.* = try .init(.{});
+    const max_easy: usize = 1000;
+    var i: usize = 0;
+    while (i < max_easy) : (i += 1) {
+        var easy = try Easy.init(.{});
         try easy.setUrl(testServer.server_url);
         try easy.setMethod(.GET);
 
-        multi.addHandle(easy) catch |err| {
+        multi.addHandle(&easy) catch |err| {
             std.testing.failPrint("error addHandle: {?s}\n", .{multi.diagnostic.getMessage()});
             return err;
         };
@@ -237,9 +228,7 @@ test "poll" {
             return err;
         };
 
-        while (true) {
-            const info = multi.readInfo() orelse break;
-
+        while (multi.readInfo()) |info| {
             if (info.msg.easy_handle) |handle| {
                 try multi.removeHandle(.{ .handle = handle });
 
@@ -251,16 +240,13 @@ test "poll" {
                     std.testing.failPrint("status: {d}\n", .{status_code});
                     return err;
                 };
-                std.debug.print("status: {any}\n", .{status_code});
             }
-
-            const active_fds = multi.poll(null, 10) catch |err| {
-                std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
-                return err;
-            };
-            _ = active_fds;
         }
 
         if (running_handles <= 0) break;
+        _ = multi.poll(null, 10) catch |err| {
+            std.testing.failPrint("{?s}\n", .{multi.diagnostic.getMessage()});
+            return err;
+        };
     }
 }
