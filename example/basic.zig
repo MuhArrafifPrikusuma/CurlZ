@@ -3,13 +3,16 @@ const std = @import("std");
 const curl = @import("curl");
 const mockServer = @import("mockServer");
 
-// fn writeCallback(ptr: [*:0]const u8, size: usize, nmemb: usize, userdata: ?*anyopaque) callconv(.c) usize {}
-
 pub fn main(init: std.process.Init) !void {
+    // run mock server to connect to
     try mockServer.ensureRunning(init.io);
 
     try curl.global.init(.all);
     defer curl.global.deinit();
+
+    var bufio: [4096]u8 = undefined;
+    var writer = std.Io.File.stdout().writer(init.io, &bufio);
+    const stdout = &writer.interface;
 
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer if (gpa.deinit() != .ok) @panic("leak");
@@ -20,13 +23,17 @@ pub fn main(init: std.process.Init) !void {
     // activate libcurl debug mode
     try easy.setVerbose(true);
 
-    var headers: curl.Headers = .{};
-    defer headers.deinit();
-
-    try headers.add("Accept: text/plain");
-
     try easy.setMethod(.GET);
     try easy.setUrl(mockServer.server_url);
 
-    _ = try easy.perform();
+    const find_header: [:0]const u8 = "Content-Type";
+
+    const res = try easy.perform();
+    const accept = try res.getHeader(find_header);
+    if (accept) |v| {
+        try stdout.print("\nheader: {s}\nvalue: {s}\n", .{ v.name, v.getValue() });
+    } else {
+        try stdout.print("\nCouldn't find header '{s}'\n", .{find_header});
+    }
+    try stdout.flush();
 }

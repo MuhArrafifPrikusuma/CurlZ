@@ -2,10 +2,7 @@
 #include <curl/curlver.h>
 #include <curl/easy.h>
 #include <curl/multi.h>
-#include <curl/typecheck-gcc.h>
-#include <stdbool.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <unistd.h>
 
 int main(void) {
@@ -14,6 +11,7 @@ int main(void) {
     char *output = curl_easy_escape(curl, "data to convert", 15);
     if (output) {
       printf("encoded: %s\n", output);
+      fflush(stdout);
       curl_free(output);
     }
     curl_easy_cleanup(curl);
