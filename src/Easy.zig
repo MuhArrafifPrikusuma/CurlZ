@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c");
+const c = @import("curl.zig");
 const testServer = @import("testServer");
 
 const util = @import("util.zig");
@@ -8,6 +8,7 @@ const ziglings = @import("ziglings.zig");
 const http = @import("http.zig");
 
 const Diagnostic = @import("Diagnostics.zig");
+const Multipart = @import("MultiPart.zig");
 
 const Headers = @import("root.zig").Headers;
 const InfoType = @import("root.zig").InfoType;
@@ -43,6 +44,11 @@ pub const FetchOptions = struct {
     headers: ?[][:0]const u8 = null,
     /// for writing response body
     writer: ?*std.Io.Writer = null,
+};
+
+pub const HandleOrWrapper = union(enum) {
+    handle: *Curl,
+    wrapper: *Self,
 };
 
 pub const Response = struct {
@@ -217,6 +223,7 @@ pub const Callback = enum(c_int) {
     read = c.CURLOPT_READFUNCTION,
     header = c.CURLOPT_HEADERFUNCTION,
     sockopt = c.CURLOPT_SOCKOPTFUNCTION,
+    seek = c.CURLOPT_SEEKFUNCTION,
 
     open_socket = c.CURLOPT_OPENSOCKETFUNCTION,
     close_socket = c.CURLOPT_CLOSESOCKETFUNCTION,
@@ -229,15 +236,15 @@ pub const Callback = enum(c_int) {
     } {
         return switch (self) {
             .write => .{
-                .callback_func = *const fn (ptr: [*:0]const u8, size: usize, nmemb: usize, userdata: ?*anyopaque) callconv(.c) usize,
+                .callback_func = *const fn (ptr: ?[*:0]const u8, size: usize, nmemb: usize, userdata: ?*anyopaque) callconv(.c) usize,
                 .data = c.CURLOPT_WRITEDATA,
             },
             .read => .{
-                .callback_func = *const fn (buffer: [*:0]u8, size: usize, nitems: usize, userdata: ?*anyopaque) callconv(.c) usize,
+                .callback_func = *const fn (buffer: ?[*:0]u8, size: usize, nitems: usize, userdata: ?*anyopaque) callconv(.c) usize,
                 .data = c.CURLOPT_READDATA,
             },
             .header => .{
-                .callback_func = *const fn (buffer: [*:0]u8, size: usize, nitems: usize, clientp: ?*anyopaque) callconv(.c) usize,
+                .callback_func = *const fn (buffer: ?[*:0]u8, size: usize, nitems: usize, clientp: ?*anyopaque) callconv(.c) usize,
                 .data = c.CURLOPT_HEADERDATA,
             },
             .open_socket => .{
@@ -253,8 +260,12 @@ pub const Callback = enum(c_int) {
                 .data = c.CURLOPT_SOCKOPTDATA,
             },
             .debug => .{
-                .callback_func = *const fn (*Curl, InfoType, [*:0]u8, usize, clientp: ?*anyopaque) callconv(.c) c_int,
+                .callback_func = *const fn (*Curl, InfoType, ?[*:0]u8, usize, clientp: ?*anyopaque) callconv(.c) c_int,
                 .data = c.CURLOPT_DEBUGDATA,
+            },
+            .seek => .{
+                .callback_func = *const fn (clientp: ?*anyopaque, offset: c.curl_off_t, origin: c_int) callconv(.c) c_int,
+                .data = c.CURLOPT_SEEKDATA,
             },
         };
     }
@@ -319,8 +330,12 @@ pub inline fn setMaxRedirects(self: *Self, max: u32) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, @intCast(max))));
 }
 
+pub inline fn setMultipart(self: *Self, multipart: *Multipart) !void {
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, multipart.mime_handle));
+}
+
 pub inline fn setVerbose(self: *Self, verbose: bool) !void {
-    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, @as(c_long, 0) ^ @intFromBool(verbose)));
+    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, @as(c_long, @intFromBool(verbose))));
 }
 
 pub inline fn setHeader(self: *Self, headers: Headers) !void {
@@ -331,7 +346,7 @@ pub inline fn setKeepAlive(self: *Self) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_TCP_KEEPALIVE, @as(c_long, 1)));
 }
 
-/// keep alive interval
+/// set keep alive interval
 pub inline fn setKeepAliveInvl(self: *Self, invl: usize) !void {
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_TCP_KEEPINTVL, @as(c_long, @intCast(invl))));
 }
@@ -358,26 +373,22 @@ pub inline fn dupHandle(self: *Self) !*Curl {
     return c.curl_easy_duphandle(self.handle) orelse error.CurlInit;
 }
 
-pub inline fn setCallback(
+/// set callback function and data pointer, if func is null this function do nothing
+pub fn setCallback(
     self: *Self,
     comptime cb: Callback,
-    func: cb.signature().callback_func,
+    func: ?cb.signature().callback_func,
     data: ?*anyopaque,
 ) !void {
-    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, @intFromEnum(cb)), func));
-    try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, comptime cb.signature().data), data));
+    if (func) |f| {
+        try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, @intFromEnum(cb)), f));
+        try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, @as(c_int, comptime cb.signature().data), data));
+    }
 }
 
 pub inline fn getInfo(self: *Self, comptime info: Info) !info.ReturnType() {
     var arg: info.ReturnType() = comptime info.resolveDefaultValue();
-    switch (info) {
-        inline .active_socket, .private => {
-            try self.diagnostic.checkError(c.curl_easy_getinfo(self.handle, @intFromEnum(info), &arg));
-        },
-        inline .response_code, .http_version => {
-            try self.diagnostic.checkError(c.curl_easy_getinfo(self.handle, @intFromEnum(info), @as(*c_long, @ptrCast(&arg))));
-        },
-    }
+    try self.diagnostic.checkError(c.curl_easy_getinfo(self.handle, @intFromEnum(info), &arg));
     return arg;
 }
 
@@ -442,7 +453,7 @@ pub fn fetch(self: *Self, url: [:0]const u8, opt: FetchOptions) !Response {
 /// pass to setCallback(.write) to discard responses
 /// instead of writing to stdout
 pub fn discard_write_callback(
-    ptr: [*:0]const u8,
+    ptr: ?[*:0]const u8,
     size: usize,
     nmemb: usize,
     userdata: ?*anyopaque,
@@ -546,7 +557,7 @@ test "setPrivate" {
     var easy = try Self.init(.{});
     defer easy.deinit();
 
-    const PrivateData = struct { datstr: []const u8, randomNumber: i32 };
+    const PrivateData = struct { datstr: [:0]const u8, randomNumber: c_int };
     const priv = PrivateData{
         .datstr = "Hwellow",
         .randomNumber = 22,

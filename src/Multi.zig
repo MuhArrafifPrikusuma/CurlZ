@@ -14,6 +14,7 @@ const Msg = @import("root.zig").Msg;
 const CurlM = @import("root.zig").CurlM;
 const Curl = @import("root.zig").Curl;
 const Socket = @import("root.zig").Socket;
+const HandleOrWrapper = Easy.HandleOrWrapper;
 
 const Self = @This();
 
@@ -32,11 +33,6 @@ pub const WaitFd = struct {
     pub fn getPtr(self: *WaitFd) *c.curl_waitfd {
         return @ptrCast(self);
     }
-};
-
-pub const HandleOrWrapper = union(enum) {
-    handle: *Curl,
-    wrapper: *Easy,
 };
 
 pub const Info = struct {
@@ -236,10 +232,7 @@ test "poll" {
                 defer easy.deinit();
 
                 const status_code: http.Status = try easy.getInfo(.response_code);
-                std.testing.expect(status_code == .ok) catch |err| {
-                    std.testing.failPrint("status: {d}\n", .{status_code});
-                    return err;
-                };
+                try std.testing.expect(status_code == .ok);
             }
         }
 

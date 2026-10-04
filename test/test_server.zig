@@ -12,15 +12,28 @@ pub var server_ready = std.atomic.Value(bool).init(false);
 pub var server_url: [:0]const u8 = undefined;
 
 pub fn ensureRunning(param: if (!builtin.is_test) std.Io else void) !void {
-    const state = server_runner_sync.load(.acquire);
     const io = if (builtin.is_test) std.testing.io else param;
 
-    if (state == .idle) {
-        _ = try std.Thread.spawn(.{}, run, .{io});
-        _ = server_runner_sync.swap(.running, .acq_rel);
+    var retries: u16 = 5;
+    if (server_runner_sync.cmpxchgStrong(.idle, .running, .acq_rel, .monotonic)) |_| {} else {
+        while (retries > 0) : (retries -= 1) {
+            const thread = std.Thread.spawn(.{}, run, .{io}) catch |err| {
+                if (retries == 1) {
+                    _ = server_runner_sync.store(.idle, .release);
+                    return err;
+                }
+                try std.Io.sleep(io, .fromMilliseconds(1), .real);
+                continue;
+            };
+            thread.detach();
+            break;
+        }
     }
 
     while (!server_ready.load(.acquire)) {
+        if (server_runner_sync.load(.acquire) == .idle) {
+            return error.ServerFailedToStart;
+        }
         try std.Io.sleep(io, .fromMilliseconds(1), .real);
     }
 }

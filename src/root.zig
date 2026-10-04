@@ -16,9 +16,9 @@ const MsgDataUnion = extern union {
 };
 
 pub const Msg = extern struct {
-    msg: c.CURLMSG = @import("std").mem.zeroes(c.CURLMSG),
+    msg: c.CURLMSG = 0,
     easy_handle: ?*Curl = null,
-    data: MsgDataUnion = @import("std").mem.zeroes(MsgDataUnion),
+    data: MsgDataUnion = std.mem.zeroes(MsgDataUnion),
 };
 
 pub const InfoType = c.curl_infotype;
@@ -27,8 +27,6 @@ pub const CurlM = c.CURLM;
 pub const Socket = c.curl_socket_t;
 pub const Mime = c.curl_mime;
 
-/// this is just standard library std.http.Status but with c_long as it's backing integer
-/// to satisfy libcurl allignment
 const util = @import("util.zig");
 
 pub const Headers = struct {
