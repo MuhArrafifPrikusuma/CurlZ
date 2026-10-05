@@ -1,6 +1,6 @@
 const std = @import("std");
-const c = @import("curl.zig");
-const testServer = @import("testServer");
+const c = @import("c");
+const testing = @import("testing");
 
 const util = @import("util.zig");
 const errors = @import("errors.zig");
@@ -470,15 +470,13 @@ pub inline fn setCommonOpt(self: *Self) !void {
 }
 
 test "fetch and response" {
-    try testServer.ensureRunning({});
-
-    try @import("root.zig").global.init(.all);
-    defer @import("root.zig").global.deinit();
+    try testing.server.ensureRunning({});
+    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
 
     var easy = try Self.init(.{});
     defer easy.deinit();
 
-    const res = easy.fetch(testServer.server_url, .{ .method = .GET }) catch |err| {
+    const res = easy.fetch(testing.server.server_url, .{ .method = .GET }) catch |err| {
         std.testing.failPrint("{?s}\n", .{easy.diagnostic.getMessage()});
         return err;
     };
@@ -490,10 +488,8 @@ test "fetch and response" {
 }
 
 test "swap and wrap" {
-    try testServer.ensureRunning({});
-
-    try @import("root.zig").global.init(.all);
-    defer @import("root.zig").global.deinit();
+    try testing.server.ensureRunning({});
+    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
 
     var easy = try Self.init(.{});
     defer easy.deinit();
@@ -510,12 +506,12 @@ test "swap and wrap" {
     var wrap_easy = Self.wrap(pref, .{});
     defer wrap_easy.deinit();
 
-    try wrap_easy.setUrl(testServer.server_url);
+    try wrap_easy.setUrl(testing.server.server_url);
     try wrap_easy.setMethod(.GET);
 
     _ = wrap_easy.perform() catch |err| {
         std.testing.failPrint("{s}: {?s}\n", .{
-            testServer.server_url,
+            testing.server.server_url,
             wrap_easy.diagnostic.getMessage(),
         });
         return err;
@@ -523,16 +519,14 @@ test "swap and wrap" {
 }
 
 test "setCallback and http ver" {
-    try testServer.ensureRunning({});
-
-    try @import("root.zig").global.init(.all);
-    defer @import("root.zig").global.deinit();
+    try testing.server.ensureRunning({});
+    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
 
     var easy = try Self.init(.{});
     defer easy.deinit();
 
     try easy.setHttpVer(.@"1.1");
-    try easy.setUrl(testServer.server_url);
+    try easy.setUrl(testing.server.server_url);
 
     easy.setCallback(.write, discard_write_callback, null) catch |err| {
         std.testing.failPrint("{?s}\n", .{easy.diagnostic.getMessage()});
@@ -549,10 +543,8 @@ test "setCallback and http ver" {
 }
 
 test "setPrivate" {
-    try testServer.ensureRunning({});
-
-    try @import("root.zig").global.init(.all);
-    defer @import("root.zig").global.deinit();
+    try testing.server.ensureRunning({});
+    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
 
     var easy = try Self.init(.{});
     defer easy.deinit();
@@ -562,7 +554,7 @@ test "setPrivate" {
         .datstr = "Hwellow",
         .randomNumber = 22,
     };
-    try easy.setUrl(testServer.server_url);
+    try easy.setUrl(testing.server.server_url);
     try easy.setPrivate(@ptrCast(@constCast(&priv)));
 
     const res = easy.perform() catch |err| {
