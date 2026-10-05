@@ -1,11 +1,11 @@
 //! example of doing simple http request using easy interface
 const std = @import("std");
 const curl = @import("curl");
-const mockServer = @import("mockServer");
+const testing = @import("testing");
 
 pub fn main(init: std.process.Init) !void {
     // run mock server to connect to
-    try mockServer.ensureRunning(init.io);
+    try testing.server.ensureRunning(init.io);
 
     try curl.global.init(.all);
     defer curl.global.deinit();
@@ -24,7 +24,7 @@ pub fn main(init: std.process.Init) !void {
     try easy.setVerbose(true);
 
     try easy.setMethod(.GET);
-    try easy.setUrl(mockServer.server_url);
+    try easy.setUrl(testing.server.server_url);
 
     const find_header: [:0]const u8 = "Content-Type";
 

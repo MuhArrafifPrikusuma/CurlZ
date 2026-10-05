@@ -24,19 +24,22 @@ pub fn build(b: *Build) !void {
     mod.addImport("build_info", build_info_mod);
 
     const test_file = b.option([]const u8, "test-filter", "test specific file");
+    const options = b.addOptions();
+    options.addOption(bool, "run_all_test", test_file == null);
+
     const test_source_file = if (test_file) |file|
         b.path(file)
     else
         b.path("src/root.zig");
 
-    const test_server = b.addModule("mock server for testing", .{
-        .root_source_file = b.path("test/test_server.zig"),
+    const test_helper = b.addModule("mock server for testing", .{
+        .root_source_file = b.path("test/testHelper.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     inline for (.{ "basic", "multi" }) |name| {
-        try addExample(b, name, mod, test_server, target, optimize);
+        try addExample(b, name, mod, test_helper, target, optimize);
     }
 
     const mod_test = b.addTest(.{
@@ -47,7 +50,8 @@ pub fn build(b: *Build) !void {
             .link_libc = true,
         }),
     });
-    mod_test.root_module.addImport("testServer", test_server);
+    mod_test.root_module.addOptions("build_options", options);
+    mod_test.root_module.addImport("testing", test_helper);
     mod_test.root_module.addImport("c", c_module);
     mod_test.root_module.addImport("build_info", build_info_mod);
 
@@ -105,7 +109,7 @@ fn addExample(
     b: *Build,
     comptime name: []const u8,
     curl_module: *Module,
-    mock_server_module: *Module,
+    testinghelper_module: *Module,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) !void {
@@ -120,7 +124,7 @@ fn addExample(
     });
     b.installArtifact(exe);
     exe.root_module.addImport("curl", curl_module);
-    exe.root_module.addImport("mockServer", mock_server_module);
+    exe.root_module.addImport("testing", testinghelper_module);
 
     const run_step = b.step(
         "run-example=" ++ name,

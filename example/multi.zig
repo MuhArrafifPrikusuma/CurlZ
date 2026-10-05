@@ -1,6 +1,6 @@
 const std = @import("std");
 const curl = @import("curl");
-const mockServer = @import("mockServer");
+const testing = @import("testing");
 
 pub fn write_callback(ptr: [*:0]const u8, size: usize, nmemb: usize, userdata: ?*anyopaque) callconv(.c) usize {
     _ = ptr;
@@ -10,7 +10,7 @@ pub fn write_callback(ptr: [*:0]const u8, size: usize, nmemb: usize, userdata: ?
 }
 
 pub fn main(init: std.process.Init) !void {
-    try mockServer.ensureRunning(init.io);
+    try testing.server.ensureRunning(init.io);
     try curl.global.init(.all);
     defer curl.global.deinit();
 
@@ -21,7 +21,7 @@ pub fn main(init: std.process.Init) !void {
     var i: usize = 0;
     while (i < max) : (i += 1) {
         var easy = try curl.Easy.init(.{});
-        try easy.setUrl(mockServer.server_url);
+        try easy.setUrl(testing.server.server_url);
         try easy.setMethod(.GET);
         // use all supported encodings
         try easy.setEncoding("");

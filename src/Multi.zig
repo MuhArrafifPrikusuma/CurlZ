@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const c = @import("curl.zig");
-const testServer = @import("testServer");
+const c = @import("c");
+const testing = @import("testing");
 
 const util = @import("util.zig");
 const ziglings = @import("ziglings.zig");
@@ -197,10 +197,8 @@ pub fn poll(self: *Self, extra_fds: ?[]WaitFd, timeout_ms: u32) !u32 {
 }
 
 test "poll" {
-    try testServer.ensureRunning({});
-
-    try @import("root.zig").global.init(.all);
-    defer @import("root.zig").global.deinit();
+    try testing.server.ensureRunning({});
+    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
 
     var multi = try Self.init();
     defer multi.deinit();
@@ -209,7 +207,7 @@ test "poll" {
     var i: usize = 0;
     while (i < max_easy) : (i += 1) {
         var easy = try Easy.init(.{});
-        try easy.setUrl(testServer.server_url);
+        try easy.setUrl(testing.server.server_url);
         try easy.setMethod(.GET);
 
         multi.addHandle(&easy) catch |err| {

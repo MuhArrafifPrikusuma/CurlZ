@@ -1,6 +1,7 @@
 const std = @import("std");
 const root = @import("root");
-const c = @import("curl.zig");
+const c = @import("c");
+const build_options = @import("build_options");
 
 pub const global = @import("global.zig");
 pub const http = @import("http.zig");
@@ -48,5 +49,6 @@ pub inline fn free(ptr: *anyopaque) void {
 }
 
 test "test_all" {
-    std.testing.refAllDecls(@This());
+    if (build_options.run_all_test)
+        std.testing.refAllDecls(@This());
 }

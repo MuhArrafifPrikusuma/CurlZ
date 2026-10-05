@@ -1,6 +1,6 @@
 const std = @import("std");
-const c = @import("curl.zig");
-const testServer = @import("testServer");
+const c = @import("c");
+const testing = @import("testing");
 
 const Easy = @import("Easy.zig");
 const Diagnostic = @import("Diagnostics.zig");
@@ -31,30 +31,19 @@ pub const NonCopying = struct {
         free: ?FreeCallback,
     };
 
+    /// use this when memory is already in ram
     pub const SliceBased = struct {
         data: Data,
-        interface: NonCopying,
 
-        const Data = struct {
+        pub const Data = struct {
             slice: []const u8,
-            offset: usize,
+            offset: usize = 0,
         };
 
-        pub fn init(slice: []const u8) SliceBased {
-            const data: Data = .{
-                .slice = slice,
-                .offset = 0,
-            };
+        pub fn nonCopying(self: *SliceBased) NonCopying {
             return .{
-                .data = data,
-                .interface = initNonCopying(&data),
-            };
-        }
-
-        fn initNonCopying(data: *Data) NonCopying {
-            return .{
-                .size = data.slice.lem,
-                .ptr = @ptrCast(data),
+                .size = self.data.slice.len,
+                .ptr = @ptrCast(&self.data),
                 .vtable = &.{
                     .read = read,
                     .seek = seek,
@@ -70,13 +59,11 @@ pub const NonCopying = struct {
             userdata: ?*anyopaque,
         ) callconv(.c) usize {
             var source: *Data = @ptrCast(@alignCast(userdata orelse return c.CURL_READFUNC_ABORT));
-            var to_read = size * nitems;
-            const remaining = source.slice.len - source.offset;
-            if (to_read > remaining) {
-                to_read = remaining;
-            }
+            const to_read = @min(size * nitems, source.slice.len - source.offset);
 
-            var b = buffer orelse c.CURL_READFUNC_ABORT;
+            if (to_read == 0) return 0;
+
+            var b = buffer orelse return c.CURL_READFUNC_ABORT;
             @memmove(b[0..to_read], source.slice[source.offset .. source.offset + to_read]);
             source.offset += to_read;
             return to_read;
@@ -101,27 +88,17 @@ pub const NonCopying = struct {
         }
     };
 
+    /// use this when reading from disk
     pub const ReaderBased = struct {
         reader: *std.Io.Reader,
         size: usize,
-        interface: NonCopying,
 
-        pub fn init(size: usize, reader: *std.Io.Reader) ReaderBased {
-            var self = ReaderBased{
-                .reader = reader,
-                .size = size,
-                .interface = undefined,
-            };
-            self.interface = initNonCopying(&self);
-            return self;
-        }
-
-        fn initNonCopying(self: *ReaderBased) NonCopying {
+        pub fn nonCopying(self: *ReaderBased) NonCopying {
             return .{
                 .size = self.size,
                 .ptr = @ptrCast(self.reader),
                 .vtable = &.{
-                    .read = &read,
+                    .read = read,
                     .seek = null,
                     .free = null,
                 },
@@ -134,10 +111,10 @@ pub const NonCopying = struct {
             nitems: usize,
             userdata: ?*anyopaque,
         ) callconv(.c) usize {
-            var source: *std.Io.Reader = @ptrCast(@alignCast(userdata orelse return c.CURL_READFUNC_ABORT));
+            var reader: *std.Io.Reader = @ptrCast(@alignCast(userdata orelse return c.CURL_READFUNC_ABORT));
             const to_read = size * nitems;
             var b = buffer orelse return c.CURL_READFUNC_ABORT;
-            const n = source.readSliceShort(b[0..to_read]) catch return c.CURL_READFUNC_ABORT;
+            const n = reader.readSliceShort(b[0..to_read]) catch return c.CURL_READFUNC_ABORT;
             return n;
         }
     };
@@ -146,7 +123,7 @@ pub const NonCopying = struct {
 pub const DataSource = union(enum) {
     data: []const u8,
     file: [:0]const u8,
-    non_copying: *NonCopying,
+    non_copying: *const NonCopying,
 };
 
 pub fn init(easy: HandleOrWrapper, diagnostic: *Diagnostic) !Self {
@@ -186,16 +163,15 @@ pub fn addPart(self: *Self, name: [:0]const u8, filename: ?[:0]const u8, source:
     }
 }
 
-test "NonCopying reader based" {
-    try testServer.ensureRunning({});
-    try @import("root.zig").global.init(.all);
-    defer @import("root.zig").global.deinit();
+test "NonCopying.ReaderBased" {
+    try testing.server.ensureRunning({});
+    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
 
     const io = std.testing.io;
 
     var easy = try Easy.init(.{});
     defer easy.deinit();
-    try easy.setUrl(testServer.server_url);
+    try easy.setUrl(testing.server.server_url);
 
     var multipart = try Self.init(.{ .wrapper = &easy }, &easy.diagnostic);
     defer multipart.deinit();
@@ -203,20 +179,62 @@ test "NonCopying reader based" {
     var buf: [8196]u8 = undefined;
     var file = try std.Io.Dir.cwd().openFile(io, "test/goaway.png", .{ .mode = .read_only });
     defer file.close(io);
+
     var freader = file.reader(io, &buf);
     const reader = &freader.interface;
 
     const stat = try file.stat(io);
 
-    var slice_based = NonCopying.ReaderBased.init(stat.size, reader);
-    const no_cpy = &slice_based.interface;
+    var reader_based = NonCopying.ReaderBased{ .size = stat.size, .reader = reader };
+    const no_cpy = reader_based.nonCopying();
 
-    try multipart.addPart("video_file", null, .{ .non_copying = no_cpy });
+    try multipart.addPart("png", null, .{ .non_copying = &no_cpy });
     try easy.setMultipart(&multipart);
 
     const res = easy.perform() catch |err| {
         std.testing.failPrint("{?s}\n", .{easy.diagnostic.getMessage()});
         return err;
     };
+    try std.testing.expect(res.status_code == .ok);
+}
+
+test "NonCopying.SliceBased" {
+    try testing.server.ensureRunning({});
+    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
+
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+
+    var easy = try Easy.init(.{});
+    defer easy.deinit();
+    try easy.setUrl(testing.server.server_url);
+
+    var multipart = try Self.init(.{ .wrapper = &easy }, &easy.diagnostic);
+    defer multipart.deinit();
+
+    var file = try std.Io.Dir.cwd().openFile(io, "test/goaway.png", .{ .mode = .read_only });
+    defer file.close(io);
+
+    const stat = try file.stat(io);
+
+    var image_buffer: [4096]u8 = undefined;
+    var freader = file.reader(io, &image_buffer);
+    const reader = &freader.interface;
+
+    const slice = try reader.readAllocAll(allocator, stat.size);
+    defer allocator.free(slice);
+
+    var slice_based = NonCopying.SliceBased{
+        .data = .{
+            .slice = slice,
+            .offset = 0,
+        },
+    };
+    const ncpy = slice_based.nonCopying();
+
+    try multipart.addPart("png", null, .{ .non_copying = &ncpy });
+
+    try easy.setMultipart(&multipart);
+    const res = try easy.perform();
     try std.testing.expect(res.status_code == .ok);
 }
