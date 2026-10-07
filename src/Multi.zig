@@ -4,7 +4,6 @@ const c = @import("c");
 const testing = @import("testing");
 
 const util = @import("util.zig");
-const ziglings = @import("ziglings.zig");
 const http = @import("http.zig");
 
 const Easy = @import("Easy.zig");
@@ -198,7 +197,10 @@ pub fn poll(self: *Self, extra_fds: ?[]WaitFd, timeout_ms: u32) !u32 {
 
 test "poll" {
     try testing.server.ensureRunning({});
-    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
+    switch (testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all})) {
+        .payload => |payload| try payload,
+        .once_set => |once| try once,
+    }
 
     var multi = try Self.init();
     defer multi.deinit();

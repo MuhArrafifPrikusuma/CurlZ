@@ -165,7 +165,10 @@ pub fn addPart(self: *Self, name: [:0]const u8, filename: ?[:0]const u8, source:
 
 test "NonCopying.ReaderBased" {
     try testing.server.ensureRunning({});
-    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
+    switch (testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all})) {
+        .payload => |payload| try payload,
+        .once_set => |once| try once,
+    }
 
     const io = std.testing.io;
 
@@ -200,7 +203,10 @@ test "NonCopying.ReaderBased" {
 
 test "NonCopying.SliceBased" {
     try testing.server.ensureRunning({});
-    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
+    switch (testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all})) {
+        .payload => |payload| try payload,
+        .once_set => |once| try once,
+    }
 
     const io = std.testing.io;
     const allocator = std.testing.allocator;
