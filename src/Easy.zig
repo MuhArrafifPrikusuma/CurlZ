@@ -4,7 +4,6 @@ const testing = @import("testing");
 
 const util = @import("util.zig");
 const errors = @import("errors.zig");
-const ziglings = @import("ziglings.zig");
 const http = @import("http.zig");
 
 const Diagnostic = @import("Diagnostics.zig");
@@ -471,7 +470,10 @@ pub inline fn setCommonOpt(self: *Self) !void {
 
 test "fetch and response" {
     try testing.server.ensureRunning({});
-    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
+    switch (testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all})) {
+        .payload => |payload| try payload,
+        .once_set => |once| try once,
+    }
 
     var easy = try Self.init(.{});
     defer easy.deinit();
@@ -489,7 +491,10 @@ test "fetch and response" {
 
 test "swap and wrap" {
     try testing.server.ensureRunning({});
-    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
+    switch (testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all})) {
+        .payload => |payload| try payload,
+        .once_set => |once| try once,
+    }
 
     var easy = try Self.init(.{});
     defer easy.deinit();
@@ -520,7 +525,10 @@ test "swap and wrap" {
 
 test "setCallback and http ver" {
     try testing.server.ensureRunning({});
-    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
+    switch (testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all})) {
+        .payload => |payload| try payload,
+        .once_set => |once| try once,
+    }
 
     var easy = try Self.init(.{});
     defer easy.deinit();
@@ -544,7 +552,10 @@ test "setCallback and http ver" {
 
 test "setPrivate" {
     try testing.server.ensureRunning({});
-    try testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all});
+    switch (testing.ensureFunctionHasRun(@import("root.zig").global.init, .{.all})) {
+        .payload => |payload| try payload,
+        .once_set => |once| try once,
+    }
 
     var easy = try Self.init(.{});
     defer easy.deinit();
