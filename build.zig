@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Build = std.Build;
 const Module = std.Build.Module;
+const Translator = @import("translate_c").Translator;
 
 pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
@@ -13,13 +14,14 @@ pub fn build(b: *Build) !void {
     opt.addOption([]const u8, "version", manifest.version);
     const build_info_mod = opt.createModule();
 
+    const translate_c = b.dependency("translate_c", .{});
     const mod = b.addModule("CurlZ", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
     });
-    const c_module = createCBindingsModule(b, target, optimize);
+
+    const c_module = createCBindingsModule(b, translate_c, target, optimize);
     mod.addImport("c", c_module);
     mod.addImport("build_info", build_info_mod);
 
@@ -63,20 +65,22 @@ pub fn build(b: *Build) !void {
 
 fn createCBindingsModule(
     b: *Build,
+    tc_dep: *Build.Dependency,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) *Module {
-    const translate_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/c.h"),
-        .target = target,
+    const opt = Translator.Options{
+        .c_source_file = b.path("src/c.h"),
         .optimize = optimize,
-    });
+        .target = target,
+        .link_libc = true,
+        .link_system_libs = &.{
+            .{ .name = "curl" },
+        },
+    };
+    const translate_c: Translator = .init(tc_dep, opt);
 
-    translate_c.link_libc = true;
-
-    translate_c.linkSystemLibrary("curl", .{});
-
-    return translate_c.createModule();
+    return translate_c.mod;
 }
 
 const Manifest = struct {
