@@ -20,7 +20,7 @@ jobs:
       - name: Install libcurl development package
         run: |
           sudo apt update
-          sudo apt install -y libcurl4-openssl-dev pkg-config
+          sudo apt install libcurl4-openssl-dev pkg-config zstd gzip libnghttp2
 
       - name: build test bin
         run: zig build test --summary all
