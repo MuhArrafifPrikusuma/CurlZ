@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: goto-bus-stop/setup-zig@v1
         with:
-          version: master
+          version: 0.17.0
 
       - name: Install libcurl development package
         run: |
