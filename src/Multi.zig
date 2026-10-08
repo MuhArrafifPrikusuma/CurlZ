@@ -117,12 +117,12 @@ pub inline fn setMaxCacheGrow(self: *Self, max: usize) !void {
 
 pub inline fn notifyDisable(self: *Self, notification: Notification) !void {
     comptime util.expectMultiNotifySupport(@src());
-    try self.diagnostic.checkMError(c.curl_multi_notify_disable(self.mhandle, @intFromEnum(notification)));
+    try self.diagnostic.checkMError(c.curl_multi_notify_disable(self.mhandle, @backingInt(notification)));
 }
 
 pub inline fn notifyEnable(self: *Self, notification: Notification) !void {
     comptime util.expectMultiNotifySupport(@src());
-    try self.diagnostic.checkMError(c.curl_multi_notify_enable(self.mhandle, @intFromEnum(notification)));
+    try self.diagnostic.checkMError(c.curl_multi_notify_enable(self.mhandle, @backingInt(notification)));
 }
 
 /// get all easy handles
@@ -136,7 +136,7 @@ pub inline fn setCallback(
     func: cb.signature().callback_fn,
     data: *anyopaque,
 ) !void {
-    try self.diagnostic.checkMError(c.curl_multi_setopt(self.mhandle, @intFromEnum(cb), func));
+    try self.diagnostic.checkMError(c.curl_multi_setopt(self.mhandle, @backingInt(cb), func));
     try self.diagnostic.checkMError(c.curl_multi_setopt(self.mhandle, cb.signature().data, data));
 }
 
