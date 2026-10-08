@@ -14,7 +14,7 @@ const Flags = enum(c_int) {
 };
 
 pub inline fn init(flags: Flags) !void {
-    try diagnostic.checkError(c.curl_global_init(@intFromEnum(flags)));
+    try diagnostic.checkError(c.curl_global_init(@backingInt(flags)));
 }
 
 pub inline fn deinit() void {

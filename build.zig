@@ -74,7 +74,7 @@ fn createCBindingsModule(
 
     translate_c.link_libc = true;
 
-    translate_c.linkSystemLibrary("curl", .{});
+    translate_c.linkSystemLibrary("curl", .{ .preferred_link_mode = .static });
 
     return translate_c.createModule();
 }

@@ -14,9 +14,6 @@ pub fn main(init: std.process.Init) !void {
     var writer = std.Io.File.stdout().writer(init.io, &bufio);
     const stdout = &writer.interface;
 
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer if (gpa.deinit() != .ok) @panic("leak");
-
     var easy = try curl.Easy.init(.{});
     defer easy.deinit();
 

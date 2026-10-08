@@ -320,7 +320,7 @@ pub inline fn setFollowLocation(self: *Self, mode: Follow) !void {
     util.assertRuntimePanic(
         "libcurl version \x1b[2m'{s}'\x1b[0m does not support \x1b[2m'{s}'\x1b[0m follow mode\n",
         .{ c.LIBCURL_VERSION, @tagName(mode) },
-        @intFromEnum(mode) == c.CURLFOLLOW_ALL,
+        @backingInt(mode) == c.CURLFOLLOW_ALL,
     );
     try self.diagnostic.checkError(c.curl_easy_setopt(self.handle, c.CURLOPT_FOLLOWLOCATION, @as(c_long, @intCast(@intFromEnum(mode)))));
 }
